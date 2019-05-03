@@ -14,45 +14,45 @@ InnoDB 支持到行级别粒度的并发控制，本小节我们分析下几种�
 
 ### LOCK_REC_NOT_GAP
 
-`锁带上这个FLAG时，表示这个锁对象只是单纯的锁在记录上，不会锁记录之前的GAP。` 在 RC 隔离级别下一般加的都是该类型的记录锁（**但唯一二级索引上的 duplicate key 检查除外，总是加 LOCK_ORDINARY 类型的锁**）。
+`锁带上这个 FLAG 时，表示这个锁对象只是单纯的锁在记录上，不会锁记录之前的 GAP。` 在 RC 隔离级别下一般加的都是该类型的记录锁（**但唯一二级索引上的 Duplicate Key 检查除外，总是加 LOCK_ORDINARY 类型的锁**）。
 
 ### LOCK_GAP
 
-`表示只锁住一段范围，不锁记录本身，通常表示两个索引记录之间，或者索引上的第一条记录之前，或者最后一条记录之后的锁。`可以理解为一种区间锁，一般在 RR 隔离级别下会使用到GAP锁。
+`表示只锁住一段范围，不锁记录本身，通常表示两个索引记录之间，或者索引上的第一条记录之前，或者最后一条记录之后的锁。`可以理解为一种区间锁，一般在 RR 隔离级别下会使用到 GAP 锁。
 
-你可以通过切换到 RC 隔离级别，或者开启选项`innodb_locks_unsafe_for_binlog`来避免GAP锁。这时候**只有在检查外键约束或者duplicate key检查时才会使用到GAP LOCK**。
+你可以通过切换到 RC 隔离级别，或者开启选项 `innodb_locks_unsafe_for_binlog` 来避免 GAP 锁。这时候**只有在检查外键约束或者 Duplicate Key 检查时才会使用到 GAP LOCK**。
 
 ### LOCK_ORDINARY(Next-Key Lock)
 
-`也就是所谓的NEXT-KEY锁，包含记录本身及记录之前的GAP。`**当前 MySQL 默认情况下使用 RR 的隔离级别，而 NEXT-KEY LOCK 正是为了解决 RR 隔离级别下的幻读问题。**所谓幻读就是一个事务内执行相同的查询，会看到不同的行记录。在 RR 隔离级别下这是不允许的。
+`也就是所谓的 NEXT-KEY 锁，包含记录本身及记录之前的 GAP。`**当前 MySQL 默认情况下使用 RR 的隔离级别，而 NEXT-KEY LOCK 正是为了解决 RR 隔离级别下的幻读问题。** 所谓幻读就是一个事务内执行相同的查询，会看到不同的行记录。在 RR 隔离级别下这是不允许的。
 
-假设索引上有记录 1, 4, 5, 8, 12 我们执行类似语句：SELECT ... WHERE col > 10 FOR UPDATE。如果我们不在 (8, 12) 之间加上 Gap锁，另外一个 Session 就可能向其中插入一条记录，例如9，当再执行一次相同的 SELECT FOR UPDATE 时，就会看到新插入的记录。
+假设索引上有记录 1, 4, 5, 8, 12 我们执行类似语句：SELECT ... WHERE col > 10 FOR UPDATE。如果我们不在 (8, 12) 之间加上 Gap 锁，另外一个 Session 就可能向其中插入一条记录，例如9，当再执行一次相同的 SELECT FOR UPDATE 时，就会看到新插入的记录。
 
 这也是为什么**插入一条记录时，需要判断下一条记录上是否加锁**了。
 
 ### LOCK_S（共享锁）
 
-`共享锁的作用通常用于在事务中读取一条行记录后，不希望它被别的事务锁修改，但所有的读请求产生的LOCK_S锁是不冲突的。`在InnoDB里有如下几种情况会请求S锁：
+`共享锁的作用通常用于在事务中读取一条行记录后，不希望它被别的事务锁修改，但所有的读请求产生的 LOCK_S 锁是不冲突的。`在 InnoDB 里有如下几种情况会请求 S 锁：
 
-1. `普通查询在隔离级别为SERIALIZABLE会给记录加LOCK_S锁。`但这也取决于场景：非事务读（auto-commit）在 SERIALIZABLE 隔离级别下，无需加锁（不过在当前最新的 5.7.10 版本中，SHOW ENGINE INNODB STATUS 的输出中不会打印只读事务的信息，只能从 informationschema.innodb_trx 表中获取到该只读事务持有的锁个数等信息）。
+1. `普通查询在隔离级别为 SERIALIZABLE 会给记录加 LOCK_S 锁。`但这也取决于场景：非事务读（auto-commit）在 SERIALIZABLE 隔离级别下，无需加锁（不过在当前最新的 5.7.10 版本中，SHOW ENGINE INNODB STATUS 的输出中不会打印只读事务的信息，只能从 `information_schema.innodb_trx` 表中获取到该只读事务持有的锁个数等信息）。
 
-2. `类似SQL SELECT ... IN SHARE MODE，会给记录加S锁，其他线程可以并发查询，但不能修改。`基于不同的隔离级别，行为有所不同:
+2. `类似SQL SELECT ... IN SHARE MODE，会给记录加 S 锁，其他线程可以并发查询，但不能修改。`基于不同的隔离级别，行为有所不同:
 
-    * RC隔离级别： LOCK_REC_NOT_GAP | LOCK_S；
+    * RC 隔离级别： LOCK_REC_NOT_GAP | LOCK_S；
 
-    * RR隔离级别：**如果查询条件为唯一索引且是唯一等值查询时，加的是 LOCK_REC_NOT_GAP | LOCK_S**；**对于非唯一条件查询，或者查询会扫描到多条记录时，加的是 LOCK_ORDINARY | LOCK_S 锁，也就是记录本身+记录之前的 GAP**；
+    * RR 隔离级别：**如果查询条件为唯一索引且是唯一等值查询时，加的是 LOCK_REC_NOT_GAP | LOCK_S**；**对于非唯一条件查询，或者查询会扫描到多条记录时，加的是 LOCK_ORDINARY | LOCK_S 锁，也就是记录本身+记录之前的 GAP**；
 
-3. `通常INSERT操作是不加锁的，但如果在插入或更新记录时，检查到duplicate key（或者有一个被标记删除的duplicate key），对于普通的INSERT/UPDATE，会加LOCK_S锁，而对于类似REPLACE INTO或者INSERT ... ON DUPLICATE这样的SQL加的是X锁。`而针对不同的索引类型也有所不同：
+3. `通常 INSERT 操作是不加锁的，但如果在插入或更新记录时，检查到 Duplicate Key（或者有一个被标记删除的 Duplicate Key），对于普通的 INSERT/UPDATE，会加 LOCK_S 锁，而对于类似 REPLACE INTO 或者 INSERT ... ON DUPLICATE 这样的SQL加的是 X 锁。`而针对不同的索引类型也有所不同：
 
-    * 对于**聚集索引**（参阅函数：row_ins_duplicate_error_in_clust），隔离级别小于等于RC时，加的是LOCK_REC_NOT_GAP类似的S或者X记录锁。否则加LOCK_ORDINARY类型的记录锁（NEXT-KEY LOCK）；
+    * 对于**聚集索引**（参阅函数：`row_ins_duplicate_error_in_clust`），隔离级别小于等于 RC 时，加的是 LOCK_REC_NOT_GAP 类似的 S 或者 X 记录锁。否则加 LOCK_ORDINARY 类型的记录锁（NEXT-KEY LOCK）；
 
-    * 对于**二级唯一索引**，`若检查到重复键，当前版本总是加 LOCK_ORDINARY 类型的记录锁(函数：row_ins_scan_sec_index_for_duplicate)。`实际上按照 RC 的设计理念，不应该加 GAP锁（bug#68021），官方也事实上尝试修复过一次，即对于 RC 隔离级别加上 LOCK_REC_NOT_GAP，但却引入了另外一个问题，导致二级索引的唯一约束失效（bug#73170），感兴趣的可以参阅我写的这篇博客，由于这个严重bug，官方很快又把这个fix给revert掉了。
+    * 对于**二级唯一索引**，`若检查到重复键，当前版本总是加 LOCK_ORDINARY 类型的记录锁(函数：row_ins_scan_sec_index_for_duplicate)。`实际上按照 RC 的设计理念，不应该加 GAP 锁（bug#68021），官方也事实上尝试修复过一次，即对于 RC 隔离级别加上 LOCK_REC_NOT_GAP，但却引入了另外一个问题，导致二级索引的唯一约束失效（bug#73170），感兴趣的可以参阅我写的这篇博客，由于这个严重bug，官方很快又把这个fix给revert掉了。
 
 4. 外键检查
 
     `当删除一条父表上的记录时，需要去检查是否有引用约束（row_pd_check_references_constraints），这时候会扫描子表（dict_table_t::referenced_list）上对应的记录，并加上共享锁。`按照实际情况又有所不同。我们举例说明：
 
-    使用RC隔离级别，两张测试表：
+    使用 RC 隔离级别，两张测试表：
 
     ``` sql
     create table t1 (a int, b int, primary key(a));
@@ -73,22 +73,22 @@ InnoDB 支持到行级别粒度的并发控制，本小节我们分析下几种�
 
     执行SQL：delete from t1 where a = 10;
 
-    * 在t1表记录10上加 LOCK_REC_NOT_GAP|LOCK_X锁；
-    * 在t2表的supremum记录（表示最大记录）上加 LOCK_ORDINARY|LOCK_S锁，即锁住(4, ~)区间；
+    * 在t1表记录10上加 LOCK_REC_NOT_GAP|LOCK_X 锁；
+    * 在t2表的 supremum 记录（表示最大记录）上加 LOCK_ORDINARY|LOCK_S 锁，即锁住(4, ~)区间；
 
     执行SQL：delete from t1 where a = 2;
 
-    * 在t1表记录(2,3)上加 LOCK_REC_NOT_GAP|LOCK_X锁；
-    * 在t2表记录(1,2)上加 LOCK_REC_NOT_GAP|LOCK_S锁，这里检查到有引用约束，因此无需继续扫描(2,2)就可以退出检查，判定报错；
+    * 在t1表记录(2,3)上加 LOCK_REC_NOT_GAP|LOCK_X 锁；
+    * 在t2表记录(1,2)上加 LOCK_REC_NOT_GAP|LOCK_S 锁，这里检查到有引用约束，因此无需继续扫描(2,2)就可以退出检查，判定报错；
 
     执行SQL：delete from t1 where a = 3;
 
     * 在t1表记录(3,4)上加 LOCK_REC_NOT_GAP|LOCK_X 锁；
     * 在t2表记录(4,4)上加 LOCK_GAP|LOCK_S锁；
 
-    另外从代码里还可以看到，如果扫描到的记录被标记删除时，也会加LOCK_ORDINARY|LOCK_S 锁。具体参阅函数：row_ins_check_foreign_constraint；
+    另外从代码里还可以看到，如果扫描到的记录被标记删除时，也会加 LOCK_ORDINARY|LOCK_S 锁。具体参阅函数：`row_ins_check_foreign_constraint`；
 
-5. `INSERT ... SELECT 插入数据时，会对SELECT的表上扫描到的数据加LOCK_S锁`。
+5. `INSERT ... SELECT 插入数据时，会对 SELECT 的表上扫描到的数据加 LOCK_S 锁`。
 
 ### LOCK_X（排他锁）
 
@@ -101,15 +101,15 @@ create table t1 (a int, b int, c int, primary key(a), key(b));
 insert into t1 values (1,2,3), (2,3,4),(3,4,5), (4,5,6),(5,6,7);
 ```
 
-执行 SQL（**通过二级索引查询**）：update t1 set c = c + 1 where b = 3;
+执行SQL（**通过二级索引查询**）：update t1 set c = c + 1 where b = 3;
 
-* RC 隔离级别：1.锁住二级索引记录，为 NOT GAP X 锁；2.锁住对应的聚集索引记录，也是 NOT GAP X锁；
+* RC 隔离级别：1.锁住二级索引记录，为 NOT GAP X 锁；2.锁住对应的聚集索引记录，也是 NOT GAP X 锁；
 
-* RR 隔离级别：1.锁住二级索引记录，为 LOCK_ORDINARY|LOCK_X 锁；2.锁住聚集索引记录，为 NOT GAP X锁；
+* RR 隔离级别：1.锁住二级索引记录，为 LOCK_ORDINARY|LOCK_X 锁；2.锁住聚集索引记录，为 NOT GAP X 锁；
 
-执行 SQL（**通过聚集索引检索，更新二级索引数据**）：update t1 set b = b + 1 where a = 2;
+执行SQL（**通过聚集索引检索，更新二级索引数据**）：update t1 set b = b + 1 where a = 2;
 
-* 对聚集索引记录加 LOCK_REC_NOT_GAP|LOCK_X锁;
+* 对聚集索引记录加 LOCK_REC_NOT_GAP|LOCK_X 锁;
 
 * `在标记删除二级索引时，检查二级索引记录上的锁（lock_sec_rec_modify_check_and_lock），如果存在和 LOCK_X|LOCK_REC_NOT_GAP 冲突的锁对象，则创建锁对象并返回等待错误码；否则无需创建锁对象；`
 
@@ -129,15 +129,15 @@ insert into t1 values (1,2,3), (2,3,4),(3,4,5), (4,5,6),(5,6,7);
 
 如果下一条记录上不存在锁对象：若记录是二级索引上的，先更新二级索引页上的最大事务ID为当前事务的ID；直接返回成功。
 
-如果下一条记录上存在锁对象，就需要判断该锁对象是否锁住了 GAP。如果 GAP 被锁住了，并判定和插入意向GAP锁冲突，当前操作就需要等待，加的锁类型为**LOCK_X | LOCK_GAP | LOCK_INSERT_INTENTION**，并进入等待状态。但是 **`插入意向锁之间并不互斥`** 。这意味着在同一个 GAP 里可能有多个申请插入意向锁的会话。
+如果下一条记录上存在锁对象，就需要判断该锁对象是否锁住了 GAP。如果 GAP 被锁住了，并判定和插入意向GAP锁冲突，当前操作就需要等待，加的锁类型为 **LOCK_X | LOCK_GAP | LOCK_INSERT_INTENTION**，并进入等待状态。但是 **`插入意向锁之间并不互斥`** 。这意味着在同一个 GAP 里可能有多个申请插入意向锁的会话。
 
 ### 锁表更新
 
-我们知道 `GAP锁是在一个记录上描述的，表示记录及其之前的记录之间的GAP。`但**如果记录之前发生了插入或者删除操作，之前描述的GAP就会发生变化，InnoDB需要对锁表进行更新**。
+我们知道 `GAP 锁是在一个记录上描述的，表示记录及其之前的记录之间的 GAP。`但**如果记录之前发生了插入或者删除操作，之前描述的 GAP 就会发生变化，InnoDB 需要对锁表进行更新**。
 
-对于**数据插入**，假设我们当前在记录[3,9]之间有会话持有锁(不管是否和插入意向锁冲突)，现在插入一条新的记录5，需要调用函数`lock_update_insert`。这里会遍历所有在记录9上的记录锁，如果这些锁不是插入意向锁并且是 LOCK_GAP 或者 NEXT-KEY LOCK（没有设置LOCK_REC_NOT_GAP标记，lock_rec_inherit_to_gap_if_gap_lock），就会为这些会话的事务增加一个新的锁对象，锁的类型为 LOCK_REC | LOCK_GAP，锁住的GAP范围在本例中为(3,5)。**所有符合条件的会话都继承了这个新的GAP，避免之前的GAP锁失效**。
+对于**数据插入**，假设我们当前在记录 [3,9] 之间有会话持有锁(不管是否和插入意向锁冲突)，现在插入一条新的记录5，需要调用函数`lock_update_insert`。这里会遍历所有在记录9上的记录锁，如果这些锁不是插入意向锁并且是 LOCK_GAP 或者 NEXT-KEY LOCK（没有设置 LOCK_REC_NOT_GAP 标记，`lock_rec_inherit_to_gap_if_gap_lock`），就会为这些会话的事务增加一个新的锁对象，锁的类型为 LOCK_REC | LOCK_GAP，锁住的 GAP 范围在本例中为(3,5)。**所有符合条件的会话都继承了这个新的 GAP，避免之前的 GAP 锁失效**。
 
-对于**数据删除**，调用函数`lock_update_delete`，这里会遍历在被删除记录上的记录锁，**当符合如下条件时，需要为这些锁对应的事务增加一个新的GAP锁，锁的Heap No为被删除记录的下一条记录**：
+对于**数据删除**，调用函数`lock_update_delete`，这里会遍历在被删除记录上的记录锁，**当符合如下条件时，需要为这些锁对应的事务增加一个新的 GAP 锁，锁的 Heap No 为被删除记录的下一条记录**：
 
 ``` c
 /*************************************************************//**
@@ -189,9 +189,9 @@ lock_rec_inherit_to_gap(
 }
 ```
 
-从上述判断可以看出，即使在 RC 隔离级别下，也有可能继承 LOCK GAP锁，这也是**当前版本InnoDB唯一的意外：判断 Duplicate Key 时目前容忍 GAP 锁。**上面这段代码实际上在最近的版本中才做过更新，更早之前的版本可能存在二级索引损坏，感兴趣的可以阅读我的这篇博客。
+从上述判断可以看出，即使在 RC 隔离级别下，也有可能继承 LOCK GAP 锁，这也是**当前版本 InnoDB 唯一的意外：判断 Duplicate Key 时目前容忍 GAP 锁。**上面这段代码实际上在最近的版本中才做过更新，更早之前的版本可能存在二级索引损坏，感兴趣的可以阅读我的这篇博客。
 
-完成GAP锁继承后，会将所有等待该记录的锁对象全部唤醒（`lock_rec_reset_and_release_wait`）。
+完成 GAP 锁继承后，会将所有等待该记录的锁对象全部唤醒（`lock_rec_reset_and_release_wait`）。
 
 ### LOCK_PREDICATE
 
@@ -209,7 +209,7 @@ Predicate Lock 相关代码见`lock/lock0prdt.cc`文件
 
 ### 隐式锁
 
-`InnoDB 通常对插入操作无需加锁，而是通过一种“隐式锁”的方式来解决冲突。`**聚集索引记录中存储了事务id，如果另外有个session查询到了这条记录，会去判断该记录对应的事务id是否属于一个活跃的事务，并协助这个事务创建一个记录锁，然后将自己置于等待队列中。**该设计的思路是基于大多数情况下新插入的记录不会立刻被别的线程并发修改，而创建锁的开销是比较昂贵的，涉及到全局资源的竞争。
+`InnoDB 通常对插入操作无需加锁，而是通过一种“隐式锁”的方式来解决冲突。`**聚集索引记录中存储了事务id，如果另外有个 Session 查询到了这条记录，会去判断该记录对应的事务id是否属于一个活跃的事务，并协助这个事务创建一个记录锁，然后将自己置于等待队列中。** 该设计的思路是基于大多数情况下新插入的记录不会立刻被别的线程并发修改，而创建锁的开销是比较昂贵的，涉及到全局资源的竞争。
 
 关于隐式锁转换，上一期的月报《[InnoDB 事务子系统](http://mysql.taobao.org/monthly/2015/12/01/)》中我们已经介绍过了，这里不再赘述。
 
@@ -228,9 +228,9 @@ static const byte lock_compatibility_matrix[5][5] = {
 };
 ```
 
-**对于记录锁而言，锁模式只有 LOCK_S 和 LOCK_X，其他的 FLAG 用于锁的描述，如前述 LOCK_GAP、LOCK_REC_NOT_GAP 以及 LOCK_ORDINARY、LOCK_INSERT_INTENTION 四种描述。** 在比较两个锁是否冲突时，即使不满足兼容性矩阵，在如下几种情况下，依然认为是相容的，无需等待（参考函数lock_rec_has_to_wait）
+**对于记录锁而言，锁模式只有 LOCK_S 和 LOCK_X，其他的 FLAG 用于锁的描述，如前述 LOCK_GAP、LOCK_REC_NOT_GAP 以及 LOCK_ORDINARY、LOCK_INSERT_INTENTION 四种描述。** 在比较两个锁是否冲突时，即使不满足兼容性矩阵，在如下几种情况下，依然认为是相容的，无需等待（参考函数`lock_rec_has_to_wait`）:
 
-* 对于 GAP 类型（锁对象建立在supremum上或者申请的锁类型为LOCK_GAP）且申请的不是插入意向锁时，无需等待任何锁，这是因为不同Session对于相同GAP可能申请不同类型的锁，而GAP锁本身设计为不互相冲突；
+* 对于 GAP 类型（锁对象建立在 supremum 上或者申请的锁类型为 LOCK_GAP）且申请的不是插入意向锁时，无需等待任何锁，这是因为不同 Session 对于相同 GAP 可能申请不同类型的锁，而 `GAP 锁本身设计为不互相冲突`；
 
 * LOCK_ORDINARY 或者 LOCK_REC_NOT_GAP 类型的锁对象，无需等待 LOCK_GAP 类型的锁；
 
@@ -240,13 +240,13 @@ static const byte lock_compatibility_matrix[5][5] = {
 
 ## 表级锁
 
-`InnoDB的表级别锁包含五种锁模式：LOCK_IS、LOCK_IX、LOCK_X、LOCK_S以及LOCK_AUTO_INC锁`，锁之间的相容性遵循数组`lock_compatibility_matrix`中的定义。
+`InnoDB 的表级别锁包含五种锁模式：LOCK_IS、LOCK_IX、LOCK_X、LOCK_S 以及 LOCK_AUTO_INC 锁`，锁之间的相容性遵循数组 `lock_compatibility_matrix` 中的定义。
 
-`InnoDB表级锁的目的是为了防止DDL和DML的并发问题。`但从 5.5 版本开始引入 MDL 锁后，InnoDB层的表级锁的意义就没那么大了，MDL 锁本身已经覆盖了其大部分功能。以下我们介绍下几种 InnoDB 表锁类型。
+`InnoDB 表级锁的目的是为了防止 DDL 和 DML 的并发问题。`但从 5.5 版本开始引入 MDL 锁后，InnoDB 层的表级锁的意义就没那么大了，MDL 锁本身已经覆盖了其大部分功能。以下我们介绍下几种 InnoDB 表锁类型。
 
 ### LOCK_IS / LOCK_IX
 
-也就是所谓的意向锁，这实际上可以理解为一种“暗示”未来需要什么样行级锁，IS表示未来可能需要在这个表的某些记录上加共享锁，IX表示未来可能需要在这个表的某些记录上加排他锁。**意向锁是表级别的，IS和IX锁之间相互并不冲突，但与表级S/X锁冲突**。
+也就是所谓的意向锁，这实际上可以理解为一种“暗示”未来需要什么样行级锁，IS 表示未来可能需要在这个表的某些记录上加共享锁，IX 表示未来可能需要在这个表的某些记录上加排他锁。**意向锁是表级别的，IS 和 IX 锁之间相互并不冲突，但与表级 S/X 锁冲突**。
 
 在对记录加S锁或者X锁时，必须保证其在相同的表上有对应的意向锁或者锁强度更高的表级锁。
 
@@ -254,17 +254,17 @@ static const byte lock_compatibility_matrix[5][5] = {
 
 当加了 LOCK_X 表级锁时，所有其他的表级锁请求都需要等待。通常有这么几种情况需要加X锁：
 
-* `DDL操作的最后一个阶段（ha_innobase::commit_inlace_alter_table）对表上加LOCK_X锁，以确保没有别的事务持有表级锁。`通常情况下，Server 层 MDL 锁已经能保证这一点了，在 DDL 的 commit 阶段是加了排他的 MDL 锁的。**但诸如外键检查或者崩溃恢复的事务（正在进行某些操作），这些操作都是直接 InnoDB 自治的，不走 Server 层，也就无法通过 MDL 所保护**；
+* `DDL 操作的最后一个阶段（ha_innobase::commit_inlace_alter_table）对表上加 LOCK_X 锁，以确保没有别的事务持有表级锁。`通常情况下，Server 层 MDL 锁已经能保证这一点了，在 DDL 的 commit 阶段是加了排他的 MDL 锁的。**但诸如外键检查或者崩溃恢复的事务（正在进行某些操作），这些操作都是直接 InnoDB 自治的，不走 Server 层，也就无法通过 MDL 所保护**；
 
-* 当设置会话的`autocommit`变量为**OFF**时，执行`LOCK TABLE tbname WRITE`这样的操作会加表级的 LOCK_X 锁（ha_innobase::external_lock）；
+* 当设置会话的 `autocommit` 变量为 **OFF** 时，执行 `LOCK TABLE tbname WRITE` 这样的操作会加表级的 LOCK_X 锁（`ha_innobase::external_lock`）；
 
-* `对某个表空间执行discard或者import操作时，需要加LOCK_X锁`（ha_innobase::discard_or_import_tablespace）。
+* **对某个表空间执行 discard 或者 import 操作时，需要加 LOCK_X 锁**（`ha_innobase::discard_or_import_tablespace`）。
 
 ### LOCK_S
 
-* `在DDL的第一个阶段，如果当前DDL不能通过ONLINE的方式执行，则对表加LOCK_S锁`（prepare_inplace_alter_table_dict）；
+* **在 DDL 的第一个阶段，如果当前 DDL 不能通过 ONLINE 的方式执行，则对表加 LOCK_S 锁**（`prepare_inplace_alter_table_dict`）；
 
-* 当设置会话的`autocommit`变量为**OFF**时，执行`LOCK TABLE tbname READ`这样的操作会加表级的 LOCK_S 锁（ha_innobase::external_lock）。
+* 当设置会话的 `autocommit` 变量为 **OFF** 时，执行 `LOCK TABLE tbname READ` 这样的操作会加表级的 LOCK_S 锁（`ha_innobase::external_lock`）。
 
 从上面的描述我们可以看到 LOCK_X 及 LOCK_S 锁在实际的大部分负载中都很少会遇到。主要还是互相不冲突的 LOCK_IS 及 LOCK_IX 锁。一个有趣的问题是，`每次加表锁时，总是要扫描表上所有的表级锁对象，检查是否有冲突的锁。`很显然，如果我们在同一张表上的更新并发度很高，这个链表就会非常长。
 
@@ -274,15 +274,15 @@ static const byte lock_compatibility_matrix[5][5] = {
 
 `AUTO_INC锁加在表级别，和AUTO_INC、表级S锁以及X锁不相容。锁的范围为SQL级别，SQL结束后即释放。`AUTO_INC 的加锁逻辑和 InnoDB 的锁模式相关，这里在简单介绍一下。
 
-通常对于自增列，我们既可以显式指定该值，也可以直接用NULL，系统将自动递增并填充该列。我们还可以在批量插入时混合使用者两种方式。不同的分配方式，其具体行为受到参数`innodb_autoinc_lock_mode`的影响。但在基于STATEMENT模式复制时，可能会影响到复制的数据一致性，[官方文档](https://dev.mysql.com/doc/refman/5.7/en/innodb-auto-increment-handling.html)有详细描述，不再赘述，只说明下锁的影响。
+通常对于自增列，我们既可以显式指定该值，也可以直接用 NULL，系统将自动递增并填充该列。我们还可以在批量插入时混合使用者两种方式。不同的分配方式，其具体行为受到参数 `innodb_autoinc_lock_mode` 的影响。但在基于 STATEMENT 模式复制时，可能会影响到复制的数据一致性，[官方文档](https://dev.mysql.com/doc/refman/5.7/en/innodb-auto-increment-handling.html)有详细描述，不再赘述，只说明下锁的影响。
 
-自增锁模式通过参数`innodb_autoinc_lock_mode`来控制，加锁选择参阅函数`ha_innobase::innobase_lock_autoinc`。
+自增锁模式通过参数 `innodb_autoinc_lock_mode` 来控制，加锁选择参阅函数`ha_innobase::innobase_lock_autoinc`。
 
 具体的，有以下几个值：
 
 **`AUTOINC_OLD_STYLE_LOCKING（0）`**
 
-也就是所谓的**传统加锁模式（在5.1版本引入这个参数之前的策略）**，`在该策略下，会在分配前加上AUTO_INC锁，并在SQL结束时释放掉。该模式保证了在STATEMENT复制模式下，备库执行类似INSERT ... SELECT这样的语句时的一致性`，因为**这样的语句在执行时无法确定到底有多少条记录，只有在执行过程中不允许别的会话分配自增值，才能确保主备一致**。
+也就是所谓的**传统加锁模式（在5.1版本引入这个参数之前的策略）**，`在该策略下，会在分配前加上 AUTO_INC 锁，并在 SQL 结束时释放掉。该模式保证了在 STATEMENT 复制模式下，备库执行类似 INSERT ... SELECT 这样的语句时的一致性`，因为**这样的语句在执行时无法确定到底有多少条记录，只有在执行过程中不允许别的会话分配自增值，才能确保主备一致**。
 
 很显然这种锁模式非常影响并发插入的性能，但却保证了一条 SQL 内自增值分配的连续性。
 
@@ -290,11 +290,11 @@ static const byte lock_compatibility_matrix[5][5] = {
 
 这是 InnoDB 的默认值。在该锁模式下：
 
-* 普通的 INSERT 或 REPLACE 操作会先加一个`dict_table_t::autoinc_mutex`，然后去判断表上是否有别的线程加了 LOCK_AUTO_INC 锁，如果有的话，释放 autoinc_mutex，并使用 `OLD STYLE` 的锁模式。否则，在预留本次插入需要的自增值之后，就快速的将 autoinc_mutex 释放掉。很显然，对于普通的并发 INSERT 操作，都是无需加 LOCK_AUTO_INC 锁的。因此大大提升了吞吐量；
+* 普通的 INSERT 或 REPLACE 操作会先加一个 `dict_table_t::autoinc_mutex`，然后去判断表上是否有别的线程加了 LOCK_AUTO_INC 锁，如果有的话，释放 autoinc_mutex，并使用 `OLD STYLE` 的锁模式。否则，在预留本次插入需要的自增值之后，就快速的将 autoinc_mutex 释放掉。很显然，对于普通的并发 INSERT 操作，都是无需加 LOCK_AUTO_INC 锁的。因此大大提升了吞吐量；
 
 * 但是**对于一些批量插入操作，例如：LOAD DATA，INSERT ... SELECT 等还是使用 OLD STYLE 的锁模式，SQL执行期间加LOCK_AUTO_INC 锁**。
 
-`和传统模式相比，这种锁模式也能保证STATEMENT模式下的复制安全性，但却无法保证一条插入语句内的自增值的连续性`，并且在执行一条混合了显式指定自增值和使用系统分配两种方式的插入语句时，可能存在一定的自增值浪费。
+`和传统模式相比，这种锁模式也能保证 STATEMENT 模式下的复制安全性，但却无法保证一条插入语句内的自增值的连续性`，并且在执行一条混合了显式指定自增值和使用系统分配两种方式的插入语句时，可能存在一定的自增值浪费。
 
 例如执行SQL：
 
@@ -306,7 +306,7 @@ INSERT INTO t1 (c1,c2) VALUES (1,'a'), (NULL,'b'), (5,'c'), (NULL,’d’）
 
 **`AUTOINC_NO_LOCKING（2）`**
 
-`这种模式下只在分配时加个mutex即可，很快就释放，不会像NEW STYLE那样在某些场景下会退化到传统模式。` **因此设为2时不能保证批量插入的复制安全性**。
+`这种模式下只在分配时加个 mutex 即可，很快就释放，不会像 NEW STYLE 那样在某些场景下会退化到传统模式。` **因此设为2时不能保证批量插入的复制安全性**。
 
 ### 关于自增锁的小BUG
 
@@ -381,7 +381,7 @@ INSERT INTO t1 (c1,c2) VALUES (1,'a'), (NULL,'b'), (5,'c'), (NULL,’d’）
 
 当发现有冲突的锁时，调用函数 `RecLock::add_to_waitq` 进行判断：
 
-* 如果持有冲突锁的线程是内部的后台线程（例如后台**dict_state**线程），这个线程不会被一个高优先级的事务取消掉，因为`总是优先保证内部线程正常执行`；
+* 如果持有冲突锁的线程是内部的后台线程（例如后台 **dict_state** 线程），这个线程不会被一个高优先级的事务取消掉，因为`总是优先保证内部线程正常执行`；
 
 * **比较当前会话和持有锁的会话的事务优先级**，调用函数 `trx_arbitrate` 返回被选作牺牲者的事务；
 
@@ -455,9 +455,9 @@ Tips：对于一个经过精心设计的应用，我们可以从业务上避免�
 
 除这两种情况外，其他的事务锁都是在事务提交时释放的（`lock_trx_release_locks --> lock_release`）。事务持有的所有锁都维护在链表 `trx_t::lock.trx_locks` 上，依次遍历释放即可。
 
-对于行锁，从全局 hash 中删除后，还需要判断别的正在等待的会话是否可以被唤醒（`lock_rec_dequeue_from_page`）。例如如果当前释放的是某个记录的X锁，那么所有的S锁请求的会话都可以被唤醒。
+对于行锁，从全局 hash 中删除后，还需要判断别的正在等待的会话是否可以被唤醒（`lock_rec_dequeue_from_page`）。例如如果当前释放的是某个记录的 X 锁，那么所有的 S 锁请求的会话都可以被唤醒。
 
-这里的移除锁和检查的逻辑开销比较大，尤其是大量线程在等待少量几个锁时。`当某个锁从 hash 链上移除时，InnoDB实际上通过遍历相同page上的所有等待的锁，并判断这些锁等待是否可以被唤醒。而判断唤醒的逻辑又一次遍历，这是因为当前的链表维护是基于<space, page no>的，并不是基于Heap no构建的。`关于这个问题的讨论，可以参阅bug#53825。官方开发Sunny也提到虽然使用 <space, page no, heap no> 来构建链表，移除 Bitmap 会浪费更多的内存，但效率更高，而且现在的内存也没有以前那么昂贵。
+这里的移除锁和检查的逻辑开销比较大，尤其是大量线程在等待少量几个锁时。`当某个锁从 hash 链上移除时，InnoDB 实际上通过遍历相同 page 上的所有等待的锁，并判断这些锁等待是否可以被唤醒。而判断唤醒的逻辑又一次遍历，这是因为当前的链表维护是基于 <space, page no> 的，并不是基于 Heap no 构建的。`关于这个问题的讨论，可以参阅bug#53825。官方开发Sunny也提到虽然使用 <space, page no, heap no> 来构建链表，移除 Bitmap 会浪费更多的内存，但效率更高，而且现在的内存也没有以前那么昂贵。
 
 对于表锁，如果表级锁的类型不为 LOCK_IS，且当前事务修改了数据，就将表对象的 `dict_table_t::query_cache_inv_id` 设置为当前最大的事务id。在检查是否可以使用该表的 Query Cache 时会使用该值进行判断（`row_search_check_if_query_cache_permitted`），如果某个用户会话的事务对象的 `low_limit_id（即最大可见事务id）`比这个值还小，说明它不应该使用当前 table cache 的内容，也不应该存储到 query cache 中。
 
