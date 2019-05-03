@@ -140,23 +140,53 @@ insert into t1 values (1,2,3), (2,3,4),(3,4,5), (4,5,6),(5,6,7);
 对于**数据删除**，调用函数`lock_update_delete`，这里会遍历在被删除记录上的记录锁，**当符合如下条件时，需要为这些锁对应的事务增加一个新的GAP锁，锁的Heap No为被删除记录的下一条记录**：
 
 ``` c
-lock_rec_inherit_to_gap
-        for (lock = lock_rec_get_first(lock_sys->rec_hash, block, heap_no);
-             lock != NULL;
-             lock = lock_rec_get_next(heap_no, lock)) {
+/*************************************************************//**
+Makes a record to inherit the locks (except LOCK_INSERT_INTENTION type)
+of another record as gap type locks, but does not reset the lock bits of
+the other record. Also waiting lock requests on rec are inherited as
+GRANTED gap locks. */
+static
+void
+lock_rec_inherit_to_gap(
+/*====================*/
+	const buf_block_t*	heir_block,	/*!< in: block containing the
+						record which inherits */
+	const buf_block_t*	block,		/*!< in: block containing the
+						record from which inherited;
+						does NOT reset the locks on
+						this record */
+	ulint			heir_heap_no,	/*!< in: heap_no of the
+						inheriting record */
+	ulint			heap_no)	/*!< in: heap_no of the
+						donating record */
+{
+	lock_t*	lock;
 
-                if (!lock_rec_get_insert_intention(lock)
-                    && !((srv_locks_unsafe_for_binlog
-                          || lock->trx->isolation_level
-                          <= TRX_ISO_READ_COMMITTED)
-                         && lock_get_mode(lock) ==
-                         (lock->trx->duplicates ? LOCK_S : LOCK_X))) {
-                        lock_rec_add_to_queue(
-                                LOCK_REC | LOCK_GAP | lock_get_mode(lock),
-                                heir_block, heir_heap_no, lock->index,
-                                lock->trx, FALSE);
-                }
-        }
+	ut_ad(lock_mutex_own());
+
+	/* If srv_locks_unsafe_for_binlog is TRUE or session is using
+	READ COMMITTED isolation level, we do not want locks set
+	by an UPDATE or a DELETE to be inherited as gap type locks. But we
+	DO want S-locks/X-locks(taken for replace) set by a consistency
+	constraint to be inherited also then. */
+
+	for (lock = lock_rec_get_first(lock_sys->rec_hash, block, heap_no);
+	     lock != NULL;
+	     lock = lock_rec_get_next(heap_no, lock)) {
+
+		if (!lock_rec_get_insert_intention(lock)
+		    && !((srv_locks_unsafe_for_binlog
+			  || lock->trx->isolation_level
+			  <= TRX_ISO_READ_COMMITTED)
+			 && lock_get_mode(lock) ==
+			 (lock->trx->duplicates ? LOCK_S : LOCK_X))) {
+			lock_rec_add_to_queue(
+				LOCK_REC | LOCK_GAP | lock_get_mode(lock),
+				heir_block, heir_heap_no, lock->index,
+				lock->trx, FALSE);
+		}
+	}
+}
 ```
 
 从上述判断可以看出，即使在 RC 隔离级别下，也有可能继承 LOCK GAP锁，这也是**当前版本InnoDB唯一的意外：判断 Duplicate Key 时目前容忍 GAP 锁。**上面这段代码实际上在最近的版本中才做过更新，更早之前的版本可能存在二级索引损坏，感兴趣的可以阅读我的这篇博客。
