@@ -292,7 +292,7 @@ INSERT INTO t1 (c1,c2) VALUES (1,'a'), (NULL,'b'), (5,'c'), (NULL,’d’）
 
 如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/learngit/master/Pic/innodb_lock_20160101.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/innodb_lock_20160101.png)
 
 ### 加表级锁
 
