@@ -1,3 +1,5 @@
+# 将本地代码 push 到 github
+
 ``` shell
 > "+" => New repository => ...... => <github_libraries>
 
@@ -17,7 +19,7 @@
 # git config --global user.email "xuchao0630@126.com"
 
 # git init
-Initialized empty Git repository in /Users/xuchao/learngit/.git/
+Initialized empty Git repository in /Users/xuchao/github_libraries/.git/
 
 # git add README.md
 
@@ -35,7 +37,7 @@ Enumerating objects: 3, done.
 Counting objects: 100% (3/3), done.
 Writing objects: 100% (3/3), 223 bytes | 223.00 KiB/s, done.
 Total 3 (delta 0), reused 0 (delta 0)
-To https://github.com/CHXU0088/learngit.git
+To https://github.com/CHXU0088/github_libraries.git
  * [new branch]      master -> master
 Branch 'master' set up to track remote branch 'master' from 'origin'.
 ```
