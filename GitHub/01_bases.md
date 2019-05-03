@@ -22,3 +22,25 @@ Total 3 (delta 0), reused 0 (delta 0)
 To https://github.com/CHXU0088/learngit.git
  * [new branch]      master -> master
 Branch 'master' set up to track remote branch 'master' from 'origin'.
+
+
+
+# git init
+
+# ssh-keygen -t rsa -C "xuchao0630@126.com"
+
+# cat id_rsa.pub
+
+github => Settings => SSH and GPG keys
+
+# ssh -T git@github.com
+
+# git config --global user.name "CHXU0088"
+# git config --global user.email "xuchao0630@126.com"
+
+# git status
+
+# git add .
+# git commit -m "tag"
+# git remote add origin https://github.com/CHXU0088/<Projects>.git
+# git push -f origin master | git push -u origin master
