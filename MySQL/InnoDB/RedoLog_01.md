@@ -130,4 +130,132 @@ log_sys->max_checkpoint_age = 13914979615 (81%)
 
 `log_sys` 与日志文件及日志缓冲区的关系可用下图来表示：
 
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/log_sys_20150501.png)
 
+## Mini Transaction
+
+**`Mini Transaction（简称 mtr）是 InnoDB 对物理数据文件操作的最小事务单元，用于管理对 Page 加锁、修改、释放、以及日志提交到公共 buffer 等工作。`** 一个 mtr 操作必须是原子的，一个事务可以包含多个 mtr。**`每个 mtr 完成后需要将本地产生的日志拷贝到公共缓冲区，将修改的脏页放到 flush list 上`**。
+
+mtr 事务对应的类为 `mtr_t`，`mtr_t::Impl` 中保存了当前 mtr 的相关信息，包括:
+
+| 变量名 | 描述 |
+| :- | :- |
+| mtr_buf_t m_memo | 用于存储该 mtr 持有的锁类型 |
+| mtr_buf_t m_log | 存储 redo log 记录 |
+| bool m_made_dirty | 是否产生了至少一个脏页 |
+| bool m_inside_ibuf | 是否在操作 `change buffer` |
+| bool m_modifications | 是否修改了 buffer pool page |
+| ib_uint32_t m_n_log_recs | 该 mtr log 记录个数 |
+| mtr_log_t m_log_mode | mtr 的工作模式，包括四种：**`MTR_LOG_ALL`**：默认模式，记录所有会修改磁盘数据的操作；**`MTR_LOG_NONE`**：不记录 redo，脏页也不放到 flush list 上；**`MTR_LOG_NO_REDO`**：不记录 redo，但脏页放到 flush list 上；**`MTR_LOG_SHORT_INSERTS`**：插入记录操作 redo，在将记录从一个 page 拷贝到另外一个新建的 page 时用到，此时忽略写索引信息到 redo log 中。（参阅函数 `page_cur_insert_rec_write_log`）|
+| fil_space_t* m_user_space | 当前 mtr 修改的用户表空间 |
+| fil_space_t* m_undo_space	| 当前 mtr 修改的 undo 表空间 |
+| fil_space_t* m_sys_space | 当前 mtr 修改的系统表空间 |
+| mtr_state_t m_state | 包含四种状态：**`MTR_STATE_INIT`**、**`MTR_STATE_COMMITTING`**、**`MTR_STATE_COMMITTED`**、**`MTR_STATE_ACTIVE`** |
+
+在修改或读取一个数据文件中的数据时，一般是通过 mtr 来控制对对应 page 或者索引树的加锁，在 5.7 中，有以下几种锁类型（`mtr_memo_type_t`）：
+
+| 变量名 | 描述 |
+| :- | :- |
+| MTR_MEMO_PAGE_S_FIX | 用于 PAGE 上的 S 锁 |
+| MTR_MEMO_PAGE_X_FIX | 用于 PAGE 上的 X 锁 |
+| MTR_MEMO_PAGE_SX_FIX | 用于 PAGE 上的 SX 锁，以上锁通过 `mtr_memo_push` 保存到 mtr 中 |
+| MTR_MEMO_BUF_FIX | PAGE 上未加读写锁，仅做 buf fix |
+| MTR_MEMO_S_LOCK | S 锁，通常用于索引锁 |
+| MTR_MEMO_X_LOCK | X 锁，通常用于索引锁 |
+| MTR_MEMO_SX_LOCK | SX 锁，通常用于索引锁，以上3个锁，通过 `mtr_s/x/sx_lock` 加锁，通过 `mtr_memo_release` 释放锁 |
+
+### mtr log 的生成
+
+**`InnoDB 的 redo log 都是通过 mtr 产生的，先写到 mtr 的 cache 中，然后再提交到公共 buffer 中`**，本小节以 INSERT 一条记录对 page 产生的修改为例，阐述一个 mtr 的典型生命周期。
+
+入口函数：`row_ins_clust_index_entry_low`
+
+#### 一、开启 mtr
+
+执行如下代码块：
+
+```
+mtr_start(&mtr);
+mtr.set_named_space(index->space);
+```
+
+**mtr_start** 主要包括：
+
+1. 初始化 mtr 的各个状态变量
+
+2. 默认模式为 MTR_LOG_ALL，表示记录所有的数据变更
+
+3. mtr 状态设置为 ACTIVE 状态（`MTR_STATE_ACTIVE`）
+
+4. 为锁管理对象和日志管理对象初始化内存（`mtr_buf_t`），初始化对象链表
+
+`mtr.set_named_space` 是 5.7 新增的逻辑，将当前修改的表空间对象 `fil_space_t` 保存下来：如果是系统表空间，则赋值给 `m_impl.m_sys_space`, 否则赋值给 `m_impl.m_user_space`。
+
+
+Tips：在 5.7 里针对临时表做了优化，直接关闭 redo 记录：`mtr.set_log_mode (MTR_LOG_NO_REDO)`
+
+#### 二、定位记录插入的位置
+
+主要入口函数：`btr_cur_search_to_nth_level`
+
+不管插入还是更新操作，都是先以乐观方式进行，因此先加索引 **S** 锁 **`mtr_s_lock(dict_index_get_lock(index),&mtr)`** ，对应 `mtr_t::s_lock` 函数 如果以悲观方式插入记录，意味着可能产生索引分裂，在 5.7 之前会加索引 X 锁，而 5.7 版本则会加 SX 锁（但某些情况下也会退化成 X 锁）；加 **X** 锁：**`mtr_x_lock(dict_index_get_lock(index), mtr)`**，对应 `mtr_t::x_lock` 函数；加 **SX** 锁：**`mtr_sx_lock(dict_index_get_lock(index),mtr)`**，对应 `mtr_t::sx_lock` 函数。
+
+对应到内部实现，实际上就是加上对应的锁对象，然后将该锁的指针和类型构建 `mtr_memo_slot_t` 对象插入到 `mtr.m_impl.m_memo` 中。
+
+当找到预插入 page 对应的 block，还需要加 block 锁，并把对应的锁类型加入到 `mtr:mtr_memo_push(mtr, block, fix_type)`。
+
+如果对 page 加的是 `MTR_MEMO_PAGE_X_FIX` 或者 `MTR_MEMO_PAGE_SX_FIX` 锁，并且当前 block 是 clean 的，则将 `m_impl.m_made_dirty` 设置成 **true**，表示即将修改一个干净的 page。
+
+如果加锁类型为MTR_MEMO_BUF_FIX，实际上是不加锁对象的，但需要判断临时表的场景，临时表page的修改不加latch，但需要将m_impl.m_made_dirty设置为true（根据block的成员m_impl.m_made_dirty来判断），这也是5.7对InnoDB临时表场景的一种优化。
+
+同样的，根据锁类型和锁对象构建mtr_memo_slot_t加入到m_impl.m_memo中。
+
+插入数据
+在插入数据过程中，包含大量的redo写cache逻辑，例如更新二级索引页的max trx id、写undo log产生的redo(嵌套另外一个mtr)、修改数据页产生的日志。这里我们只讨论修改数据页产生的日志，进入函数page_cur_insert_rec_write_log:
+
+Step 1: 调用函数mlog_open_and_write_index记录索引相关信息
+
+调用mlog_open，分配足够日志写入的内存地址，并返回内存指针
+初始化日志记录：mlog_write_initial_log_record_fast 写入 |类型=MLOG\_COMP\_REC\_INSERT，1字节|space id | page no| space id 和page no采用一种压缩写入的方式（mach_write_compressed），根据数字的具体大小，选择从1到4个字节记录整数，节约redo空间，对应的解压函数为mach_read_compressed
+写入当前索引列个数，占两个字节
+写入行记录上决定唯一性的列的个数，占两个字节(dict_index_get_n_unique_in_tree) 对于聚集索引，就是PK上的列数；对于二级索引，就是二级索引列+PK列个数
+写入每个列的长度信息，每个列占两个字节 如果这是 varchar 列且最大长度超过255字节, len = 0x7fff；如果该列非空，len |= 0x8000；其他情况直接写入列长度。
+Step 2: 写入记录在page上的偏移量，占两个字节
+
+mach_write_to_2(log_ptr, page_offset(cursor_rec));
+
+Step 3: 写入记录其它相关信息 （rec size, extra size, info bit，关于InnoDB的数据文件物理描述，我们以后再介绍，本文不展开）
+
+Step 4: 将插入的记录拷贝到redo文件，同时关闭mlog
+
+memcpy(log_ptr, ins_ptr, rec_size);
+mlog_close(mtr, log_ptr + rec_size);
+通过上述流程，我们写入了一个类型为MLOG_COMP_REC_INSERT的日志记录。由于特定类型的记录都基于约定的格式，在崩溃恢复时也可以基于这样的约定解析出日志。
+
+这里只举了一个非常简单的例子，该mtr中只包含一条redo记录。实际上mtr遍布整个InnoDB的逻辑，但只要遵循相同的写入和读取约定，并对写入的单元（page）加上互斥锁，就能从崩溃恢复。
+
+更多的redo log记录类型参见enum mlog_id_t。
+
+在这个过程中产生的redo log都记录在mtr.m_impl.m_log中，只有显式提交mtr时，才会写到公共buffer中。
+
+提交mtr log
+当提交一个mini transaction时，需要将对数据的更改记录提交到公共buffer中，并将对应的脏页加到flush list上。
+
+入口函数为mtr_t::commit()，当修改产生脏页或者日志记录时，调用mtr_t::Command::execute，执行过程如下：
+
+Step 1: mtr_t::Command::prepare_write()
+
+若当前mtr的模式为MTR_LOG_NO_REDO 或者MTR_LOG_NONE，则获取log_sys->mutex，从函数返回
+若当前要写入的redo log记录的大小超过log buffer的二分之一，则去扩大log buffer，大小约为原来的两倍。
+持有log_sys->mutex
+调用函数log_margin_checkpoint_age检查本次写入： 如果本次产生的redo log size的两倍超过redo log文件capacity，则打印一条错误信息；若本次写入可能覆盖检查点，还需要去强制做一次同步chekpoint
+检查本次修改的表空间是否是上次checkpoint后第一次修改，调用函数（fil_names_write_if_was_clean） 如果space->max_lsn = 0，表示自上次checkpoint后第一次修改该表空间： a. 修改space->max_lsn为当前log_sys->lsn； b. 调用fil_names_dirty_and_write将该tablespace加入到fil_system->named_spaces链表上； c. 调用fil_names_write写入一条类型为MLOG_FILE_NAME的日志，写入类型、spaceid, page no(0)、文件路径长度、以及文件路径名。
+
+在mtr日志末尾追加一个字节的MLOG_MULTI_REC_END类型的标记，表示这是多个日志类型的mtr。
+
+Tips：在5.6及之前的版本中，每次crash recovery时都需要打开所有的ibd文件，如果表的数量非常多时，会非常影响崩溃恢复性能，因此从5.7版本开始，每次checkpoint后，第一次修改的文件名被记录到redo log中，这样在重启从检查点恢复时，就只打开那些需要打开的文件即可（WL#7142）
+
+如果不是从上一次checkpoint后第一次修改该表，则根据mtr中log的个数，或标识日志头最高位为MLOG_SINGLE_REC_FLAG，或附加一个1字节的MLOG_MULTI_REC_END日志。
+注意从prepare_write函数返回时是持有log_sys->mutex锁的。
+
+至此一条插入操作产生的mtr日志格式有可能如下图所示：
