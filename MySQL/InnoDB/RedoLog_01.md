@@ -105,25 +105,29 @@ log_sys->max_checkpoint_age = 13914979615 (81%)
 | volatile bool is_extending | Log Buffer 是否正在进行扩展（防止过大的 `redo log entry` 无法写入 Buffer）, 实际上，**当写入的 redo log 长度超过 buf_size/2 时，就会去调用函数 `log_buffer_extend`**，一旦扩展 Buffer，就不会在缩减回去了！|
 | ulint write_end_offset | 本次写入的结束位置偏移量（从逻辑来看有点多余，直接用log_sys->buf_free 就行了）|
 
-和Checkpoint检查点相关的成员变量：
+和 `checkpoint` 检查点相关的成员变量：
 
-变量名	描述
-ib_uint64_t next_checkpoint_no	每完成一次checkpoint递增该值
-lsn_t last_checkpoint_lsn	最近一次checkpoint时的lsn，每完成一次checkpoint，将next_checkpoint_lsn的值赋给last_checkpoint_lsn
-lsn_t next_checkpoint_lsn	下次checkpoint的lsn（本次发起的checkpoint的lsn）
-mtr_buf_t* append_on_checkpoint	5.7新增，在做DDL时（例如增删列），会先将包含MLOG_FILE_RENAME2日志记录的buf挂到这个变量上。 在DDL完成后，再清理掉。(log_append_on_checkpoint),主要是防止DDL期间crash产生的数据词典不一致。 该变量在如下commit加上： a5ecc38f44abb66aa2024c70e37d1f4aa4c8ace9
-ulint n_pending_checkpoint_writes	大于0时，表示有一个checkpoint写入操作正在进行。用户发起checkpoint时，递增该值。后台线程完成checkpoint写入后，递减该值(log_io_complete)
-rw_lock_t checkpoint_lock	checkpoint锁，每次写checkpoint信息时需要加x锁。由异步io线程释放该x锁
-byte* checkpoint_buf	Checkpoint信息缓冲区，每次checkpoint前，先写该buf，再将buf刷到磁盘
+| 变量名 | 描述 |
+| :- | :- |
+| ib_uint64_t next_checkpoint_no | 每完成一次 checkpoint 递增该值 |
+| lsn_t last_checkpoint_lsn | 最近一次 checkpoint 时的 lsn，每完成一次 checkpoint，将 `next_checkpoint_lsn` 的值赋给 `last_checkpoint_lsn` | 
+| lsn_t next_checkpoint_lsn | 下次 checkpoint 的 lsn（本次发起的 checkpoint 的 lsn ） |
+| mtr_buf_t* append_on_checkpoint | 5.7 新增，在做 DDL 时（例如增删列），会先将包含 `MLOG_FILE_RENAME2` 日志记录的 buf 挂到这个变量上。在 DDL 完成后，再清理掉。`log_append_on_checkpoint` 主要是防止 DDL 期间 crash 产生的数据字典不一致。 该变量在如下 commit 加上： a5ecc38f44abb66aa2024c70e37d1f4aa4c8ace9 |
+| ulint n_pending_checkpoint_writes | 大于 0 时，表示有一个 checkpoint 写入操作正在进行。用户发起 checkpoint 时，递增该值。后台线程完成 checkpoint 写入后，递减该值（`log_io_complete`）|
+| rw_lock_t checkpoint_lock | **checkpoint 锁，每次写 checkpoint 信息时需要加 X 锁**。由异步 io 线程释放该 X 锁 |
+| byte* checkpoint_buf | checkpoint 信息缓冲区，每次 checkpoint 前，先写该 buf，再将 buf 刷到磁盘 |
+
 其他状态变量
 
-变量名	描述
-bool check_flush_or_checkpoint	当该变量被设置时，用户线程可能需要去检查释放要刷log buffer、或是做preflush、checkpoint等以防止Redo 空间不足
-lsn_t write_lsn	最近一次完成写入到文件的LSN
-lsn_t current_flush_lsn	当前正在fsync到的LSN
-lsn_t flushed_to_disk_lsn	最近一次完成fsync到文件的LSN
-ulint n_pending_flushes	表示pending的redo fsync，这个值最大为1
-os_event_t flush_event	若当前有正在进行的fsync，并且本次请求也是fsync操作，则需要等待上次fsync操作完成
-log_sys与日志文件和日志缓冲区的关系可用下图来表示：
+| 变量名 | 描述 |
+| :- | :- |
+| bool check_flush_or_checkpoint | 当该变量被设置时，用户线程可能需要去做一些检查释放（要刷 log buffer、或是做 preflush、checkpoint 等）的工作，以防止 Redo 空间不足 |
+| lsn_t write_lsn | 最近一次完成写入到文件的 LSN |
+| lsn_t current_flush_lsn | 当前正在 fsync 的 LSN |
+| lsn_t flushed_to_disk_lsn | 最近一次完成fsync到文件的 LSN |
+| ulint n_pending_flushes | 表示 pending 的 redo fsync，这个值最大为1 |
+| os_event_t flush_event | 若当前有正在进行的 fsync，并且本次请求也是 fsync 操作，则需要等待上次 fsync 操作完成 |
+
+`log_sys` 与日志文件及日志缓冲区的关系可用下图来表示：
 
 
