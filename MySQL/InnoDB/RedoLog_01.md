@@ -283,3 +283,187 @@ mlog_close(mtr, log_ptr + rec_size);
 注意：从 `prepare_write` 函数返回时是持有 `log_sys->mutex` 锁的。
 
 至此一条插入操作产生的 mtr 日志格式有可能如下图所示：
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/mtr_log_20150501.png)
+
+**Step 2：`mtr_t::Command::finish_write`**
+
+将日志从 mtr 中拷贝到公共 `log buffer`。这里有两种方式：
+
+1. 如果 mtr 中的日志较小，则调用函数 `log_reserve_and_write_fast`，尝试将日志拷贝到 `log buffer` 最近的一个 block。如果空间不足，走逻辑（2），否则直接拷贝；
+
+2. 检查是否有足够的空闲空间后，返回当前的 lsn 赋值给 `m_start_lsn（log_reserve_and_open(len)）`，随后将日志记录写入到 `log buffer` 中；
+
+    ```
+    m_start_lsn = log_reserve_and_open(len);
+    mtr_write_log_t write_log;
+    m_impl->m_log.for_each_block(write_log);
+    ```
+
+3. 在完成将 redo 拷贝到 `log buffer` 后需要调用 `log_close`，如果最后一个 block 未写满，则设置该 block 头部的 `LOG_BLOCK_FIRST_REC_GROUP`信息；满足如下情况时，设置 `log_sys->check_flush_or_checkpoint` 为 **true**：
+
+    * 当前写入 buffer 的位置超过 log buffer 的一半
+    * bp 中最老lsn和当前lsn的距离超过 `log_sys->max_modified_age_sync`
+    * 当前未 checkpoint 的 lsn age 超过 `log_sys->max_checkpoint_age_async`
+    * 当前 bp 中最老 lsn 为 0（没有脏页）
+
+    当 `check_flush_or_checkpoint` 被设置时，用户线程在每次修改数据前会调用 `log_free_check`，根据该标记决定是否刷 redo 日志或者脏页。
+
+注意：**`log buffer 遵循一定的格式，它以 512 字节对齐，和 redo log 文件的 block size 必须完全匹配`**。由于以固定 block size 组织结构，因此一个 block 中可能包含多个 mtr 提交的记录，也可能一个 mtr 的日志占用多个 block。如下图所示：
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/redo_log_buffer_20150501.png)
+
+**Step 3**：如果本次修改产生了脏页，获取 `log_sys->log_flush_order_mutex`，随后释放 `log_sys->mutex`。
+
+**Step 4**：**`将当前 mtr 修改的脏页加入到 flush list 上，脏页上记录的 lsn 为当前 mtr 写入的结束点 lsn`**。基于上述加锁逻辑，能够保证 flush list 上的脏页总是以 LSN 排序。
+
+**Step 5**：释放 `log_sys->log_flush_order_mutex` 锁。
+
+**Step 6**：释放当前 mtr 持有的锁（主要是 `page latch`）及分配的内存，mtr 完成提交。
+
+## Redo 写盘操作
+
+有几种场景可能会触发 Redo Log 写文件：
+
+1. Redo Log Buffer 空间不足时
+
+2. 事务提交
+
+3. 后台线程
+
+4. `checkpoint`
+
+5. 实例 `shutdown`
+
+6. `binlog` 切换
+
+我们所熟悉的参数 **`innodb_flush_log_at_trx_commit`** 作用于事务提交时，这也是最常见的场景：
+
+* 当设置该值为 **1** 时，每次事务提交都要做一次 `fsync`，这是最安全的配置，即使宕机也不会丢失事务；
+
+* 当设置为 **2** 时，则在事务提交时只做 `write` 操作，只保证写到系统的 `page cache`，因此实例 crash 不会丢失事务，但机器宕机则可能丢失事务；
+
+* 当设置为 **0** 时，事务提交不会触发 redo 写操作，而是留给后台线程每秒一次的刷盘操作，因此实例 crash 将最多丢失1秒钟内的事务。
+
+下图表示了不同配置值的持久化程度：
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/innodb_flush_log_at_trx_commit_20150501.png)
+
+显然对性能的影响是随着持久化程度的增加而增加的。通常我们建议在日常场景将该值设置为1，但在系统高峰期临时修改成2以应对大负载。
+
+由于各个事务可以交叉的将事务日志拷贝到 `log buffer` 中，因而一次事务提交触发的写 redo 到文件，可能隐式的帮别的线程“顺便”也写了 redo log，从而达到 `group commit` 的效果。
+
+写 redo log 的入口函数为 `log_write_up_to`，该函数的逻辑比较简单，这里不详细描述，但有几点说明下。
+
+### log_write_up_to 逻辑重构
+
+首先在该代码逻辑上，相比 5.6 及之前的版本，5.7 在没有更改“日志写”主要架构的基础上重写了 `log_write_up_to`，让其代码更加可读，同时消除一次多余的 `log_sys->mutex` 获取，具体的([WL#7050](https://dev.mysql.com/worklog/task/?id=7050))：
+
+* 早期版本的 InnoDB 支持将 redo 写到多个 group 中，但现在只支持一个 group ，因此移除相关的变量，消除 `log_write_up_to` 的第二个传参；
+
+* `write redo` 操作一直持有 `log_sys->mutex`, 所有随后的 write 请求，不再进入 `condition wait`, 而是通过 `log_sys->mutex` 序列化；
+
+* 之前的逻辑中，在 write 一次 redo 后，需要释放 `log_sys->mutex`，再重新获取，更新相关变量，新的逻辑消除了第二次获取 `log_sys->mutex`；
+
+* write 请求的写 redo 无需等待 fsync，这意味着写 redo log 文件和 fsync 文件可以同时进行。
+
+理论上该改动可以帮助优化 `innodb_flush_log_at_trx_commit=2` 时的性能。
+
+### Log Write Ahead
+
+上面已经介绍过，**`InnoDB 以 512 字节一个 block 的方式对齐写入 ib_logfile 文件，但现代文件系统一般以 4096 字节为一个 block 单位。如果即将写入的日志文件块不在 OS Cache 时，就需要将对应的4096字节的 block 读入内存，修改其中的 512 字节，然后再把该 block 写回磁盘`**。
+
+为了解决这个问题，MySQL 5.7 引入了一个新参数：`innodb_log_write_ahead_size`。当当前写入文件的偏移量不能整除该值时，则补0，多写一部分数据。这样当写入的数据是以磁盘 block size 对齐时，就可以直接 write 磁盘，而无需 read-modify-write 这三步了。
+
+注意：`innodb_log_write_ahead_size` 的默认值为**8196**，你可能需要根据你的系统配置来修改该值，以获得更好的效果。
+
+### InnoDB Redo Log Checksum
+
+**`在写入 redo log 到文件之前，redo log 的每一个 block 都需要加上 checksum 校验位，以防止 apply 了损坏的 redo log`**。
+
+然而在 5.7.7 之前版本，都是使用的 InnoDB 的默认 checksum 算法（称为 `InnoDB Checksum`），这种算法的效率较低。因此在 MySQL 5.7.8 以及 Percona Server 5.6 版本都支持使用 CRC32 的 checksum 算法，该算法可以引用硬件特性，因而具有非常高的效率。
+
+在我的 **sysbench** 测试中，使用 **update_non_index**，128个并发下 TPS 可以从 55000 上升到 60000（非双1），效果还是非常明显的。
+
+## Redo Checkpoint
+
+InnoDB 的 redo log 采用覆盖循环写的方式，而不是拥有无限的 redo 空间；即使拥有理论上极大的 redo log 空间，为了从崩溃中快速恢复，及时做 checkpoint 也是非常有必要的。
+
+**`InnoDB 的 master 线程大约每隔10秒会做一次 redo checkpoint，但不会去 preflush 脏页来推进 checkpoint 点`**。
+
+通常普通的低压力负载下，page cleaner 线程的刷脏速度足以保证可作为检查点的 lsn 被及时的推进。但**如果系统负载很高时，redo log 推进速度过快，而 page cleaner 来不及刷脏，这时候就会出现用户线程陷入同步刷脏并做同步 checkpoint 的境地**，这种策略的目的是为了保证 redo log 能够安全的写入文件而不会覆盖最近的检查点。
+
+redo checkpoint 的入口函数为 `log_checkpoint`，其执行流程如下：
+
+**Step1**：持有 `log_sys->mutex` 锁，并获取 `buffer pool` 的 `flush list` 链表尾的 block 上的 lsn，这个 lsn 是 buffer pool 中未写入数据文件的最老 lsn，在该 lsn 之前的数据都保证已经写入了磁盘；
+
+**Step 2**：调用函数 `fil_names_clear`；
+
+1. 如果 `log_sys->append_on_checkpoint` 被设置，表示当前有会话正处于 DDL 的 commit 阶段，但还没有完成，向 `redo log buffer` 中追加一个新的 redo log 记录；该逻辑由commit a5ecc38f44abb66aa2024c70e37d1f4aa4c8ace9引入，用于解决 DDL 过程中 crash 的问题；
+
+2. 扫描 `fil_system->named_spaces` 上的 `fil_space_t` 对象，如果表空间 `fil_space_t->max_lsn` 小于当前准备做 checkpoint 的 lsn，则从链表上移除并将 max_lsn 重置为0。同时为每个被修改的表空间构建 `MLOG_FILE_NAME` 类型的 redo 记录。（这一步未来可能会移除，只要跟踪第一次修改该表空间的 min_lsn，并且 min_lsn 大于当前 checkpoint 的 lsn，就可以忽略调用 `fil_names_write`）；
+
+3. 写入一个 `MLOG_CHECKPOINT` 类型的 `CHECKPOINT REDO` 记录，并记入当前的 checkpoint LSN；
+
+**Step3**：`fsync redo log` 到当前的 lsn；
+
+**Step4**：写入 `checkpoint` 信息；
+
+函数：`log_write_checkpoint_info->log_group_checkpoint`
+
+**`checkpoint 信息被写入到了第一个 ib_logfile 的头部`**，但写入的文件偏移位置比较有意思，当 `log_sys->next_checkpoint_no` 为**奇数**时，写入到 `LOG_CHECKPOINT_2（3 *512字节）`位置，为**偶数**时，写入到 `LOG_CHECKPOINT_1（512字节）`位置。
+
+大致结构如下图所示：
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/log_checkpoint_20150501.png)
+
+**`在 crash recovery 重启时，会读取记录在 checkpoint 中的 lsn 信息，然后从该 lsn 开始扫描 redo 日志`**。
+
+checkpoint 操作由异步IO线程执行写入操作，当完成写入后，会调用函数 `log_io_complete` 执行如下操作：
+
+1. fsync 被修改的 redo log 文件；
+
+2. 更新相关变量：
+
+    ```
+    log_sys->next_checkpoint_no++
+    log_sys->last_checkpoint_lsn = log_sys->next_checkpoint_lsn
+    ```
+
+3. 释放 `log_sys->checkpoint_lock` 锁；
+
+然而在 5.7 之前的版本中，我们并没有根据即将写入的数据大小来预测当前是否需要做 checkpoint，而是在写之前检测，保证 redo log 文件中有”足够安全”的空间（而非绝对安全）。假定我们的 ib_logfile 文件很小，如果我们更新一个非常大的 blob 字段，就有可能覆盖掉未 checkpoint 的 redo log，大神 Jeremy cole 在 buglist 上提了一个 [Bug#69477](https://bugs.mysql.com/bug.php?id=69477)。
+
+为了解决该问题，在 MySQL 5.6.22 版本开始，对 blob 列做了限制：当 redo log 的大小超过 `(innodb_log_file_size * innodb_log_files_in_group)` 的十分之一时，就会给应用报错，然而这可能会带来不兼容问题，用户会发现，早期版本用的好好的 SQL，在最新版本的 5.6 里居然跑不动了。
+
+在 5.7.5 及之后版本，则没有了 5.6 的限制，其核心思路是每操作4个外部存储页，就检查一次 redo log 是否足够用，如果不够，就会推进 checkpoint 的 lsn。当然具体的实现比较复杂，感兴趣的参考如下comit：f88a5151b18d24303746138a199db910fbb3d071。
+
+## 文件日志
+
+除了普通的 redo log 日志外，InnoDB 还增加了一种文件日志类型，即通过创建特定文件，赋予特定的文件名来标示某种操作。目前有两种类型：`undo tablespace truncate`操作及`用户表空间truncate`操作。通过文件日志可以保证这些操作的原子性。
+
+### Undo Tablespace Truncate
+
+我们知道 Undo Log 是 MVCC 多版本控制的核心模块，一直以来 Undo Log 都存储在 ibdata 系统表空间中，而从 5.6 开始，用户可以把 Undo Log 存储到独立的 Tablespace 中，并拆分成多个 Undo Log 文件，但无法缩小文件的大小。而长时间未提交事务导致大量 undo 空间的浪费的例子，在我们的生产场景也不是一次两次了。
+
+5.7 版本的 Undo Log 的 truncate 操作是基于独立 undo 表空间来实现的。**`在 purge 线程选定需要清理的 undo tablespace 后，开始做 truncate 操作之前，会先创建一个命名为 undo_space_id_trunc.log 的文件，然后将 undo tablespace truncate 到 10M 大小，在完成 truncate 后删除日志文件`**。
+
+如果在 truncate 过程中实例崩溃重启，若发现该文件存在，则认为 truncate 操作没有完成，需要重做一遍。注意这种文件操作是无法回滚的。
+
+### User Tablespace Truncate
+
+类似的，在 5.7 版本里，也是通过日志文件来保证用户表空间 truncate 操作的原子性。在做实际的文件操作前，创建一个命名为 ib_space-id_table-id_trunc.log 的文件。在完成操作后删除。
+
+同样的，在崩溃重启时，如果检查到该文件存在，需要确认是否重做。
+
+## InnoDB Shutdown
+
+实例关闭分为两种，一种是正常 shutdown（非fast shutdown），实例重启时无需 apply 日志，另外一种是异常 shutdown，包括：实例 crash 以及 fast shutdown。
+
+**`当正常 shutdown 实例时，会将所有的脏页都刷到磁盘，并做一次完全同步的 checkpoint；同时将最后的 lsn 写到系统表 ibdata 的第一个 page 中（函数fil_write_flushed_lsn）。在重启时，可以根据该lsn来判断这是不是一次正常的shutdown，如果不是就需要去做崩溃恢复逻辑`**。
+
+参阅函数 `logs_empty_and_mark_files_at_shutdown`。
+
+关于异常重启的逻辑，由于崩溃恢复涉及到的模块众多，逻辑复杂，我们将在下期月报单独进行描述。
+
+------
