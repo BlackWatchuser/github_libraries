@@ -276,9 +276,10 @@ mlog_close(mtr, log_ptr + rec_size);
 
     在 mtr 日志末尾追加一个字节的 **`MLOG_MULTI_REC_END`** 类型的标记，表示这是多个日志类型的 mtr。
 
-    Tips：在 5.6 及之前的版本中，每次 crash recovery 时都需要打开所有的 ibd 文件，如果表的数量非常多时，会非常影响崩溃恢复性能，因此从 5.7 版本开始，每次 checkpoint 后，第一次修改的文件名被记录到 redo log 中，这样在重启从检查点恢复时，就只打开那些需要打开的文件即可（WL#7142）
+    Tips：在 5.6 及之前的版本中，每次 crash recovery 时都需要打开所有的 ibd 文件，如果表的数量非常多时，会非常影响崩溃恢复性能，因此**从 5.7 版本开始，每次 checkpoint 后，第一次修改的文件名被记录到 redo log 中，这样在重启从检查点恢复时，就只打开那些需要打开的文件即可**（[WL#7142](https://dev.mysql.com/worklog/task/?id=7142)）
 
-如果不是从上一次checkpoint后第一次修改该表，则根据mtr中log的个数，或标识日志头最高位为MLOG_SINGLE_REC_FLAG，或附加一个1字节的MLOG_MULTI_REC_END日志。
-注意从prepare_write函数返回时是持有log_sys->mutex锁的。
+6. 如果不是从上一次 checkpoint 后第一次修改该表，则根据 mtr 中 log 的个数，或标识日志头最高位为 `MLOG_SINGLE_REC_FLAG`，或附加一个1字节的 `MLOG_MULTI_REC_END` 日志。
 
-至此一条插入操作产生的mtr日志格式有可能如下图所示：
+注意：从 `prepare_write` 函数返回时是持有 `log_sys->mutex` 锁的。
+
+至此一条插入操作产生的 mtr 日志格式有可能如下图所示：
