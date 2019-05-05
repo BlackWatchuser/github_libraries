@@ -84,21 +84,31 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 1. 首先总是从 **`cahced list`** 上分配 **trx_undo_t**（函数 `trx_undo_reuse_cached`，**当满足某些条件时，事务提交时会将其拥有的 `trx_undo_t` 放到 `cached list` 上，这样新的事务可以重用这些 undo 对象，而无需去扫描回滚段**，寻找可用的 slot，在后面的事务提交一节会介绍到）；
 
-    * 对于 INSERT，从trx_rseg_t::insert_undo_cached上获取，并修改头部重用信息（trx_undo_insert_header_reuse）及预留XID空间（trx_undo_header_add_space_for_xid）
+    * 对于 **INSERT**，从 `trx_rseg_t::insert_undo_cached` 上获取，并修改头部重用信息（`trx_undo_insert_header_reuse`）及预留XID空间（`trx_undo_header_add_space_for_xid`）
 
-    * 对于 DELETE/UPDATE，从trx_rseg_t::update_undo_cached上获取， 并在undo log hdr page上创建新的Undo log header(trx_undo_header_create)，及预留XID存储空间（trx_undo_header_add_space_for_xid）
+    * 对于 **DELETE/UPDATE**，从 `trx_rseg_t::update_undo_cached` 上获取，并在 `Undo Log HDR Page` 上创建新的 `Undo Log Header`（`trx_undo_header_create`），及预留XID存储空间（`trx_undo_header_add_space_for_xid`）
 
-    * 获取到trx_undo_t对象后，会从cached list上移除掉。并初始化trx_undo_t相关信息（trx_undo_mem_init_for_reuse），将trx_undo_t::state设置为TRX_UNDO_ACTIVE
+    * 获取到 **trx_undo_t** 对象后，会从 cached list 上移除掉。并初始化 `trx_undo_t` 相关信息（`trx_undo_mem_init_for_reuse`），将 `trx_undo_t::state` 设置为 **TRX_UNDO_ACTIVE**
 
-2. 如果没有cache的trx_undo_t，则需要从回滚段上分配一个空闲的undo slot（trx_undo_create），并创建对应的undo页，进行初始化；
+2. 如果没有 cache 的 trx_undo_t，则需要从回滚段上分配一个空闲的 Undo Slot（`trx_undo_create`），并创建对应的 Undo 页，进行初始化；
 
-    * 一个回滚段可以支持1024个事务并发，如果不幸回滚段都用完了（通常这几乎不会发生），会返回错误DB_TOO_MANY_CONCURRENT_TRXS
+    * **`一个回滚段可以支持 1024 个事务并发`**，如果不幸回滚段都用完了（通常这几乎不会发生），会返回错误 **DB_TOO_MANY_CONCURRENT_TRXS**
 
-    * 每一个Undo log segment实际上对应一个独立的段，段头的起始位置在UNDO 头page的TRX_UNDO_SEG_HDR+TRX_UNDO_FSEG_HEADER偏移位置（见下图）
+    * 每一个 `Undo Log Segment` 实际上对应一个独立的段，段头的起始位置在 UNDO 头 Page 的 `TRX_UNDO_SEG_HDR + TRX_UNDO_FSEG_HEADER` 偏移位置（见下图）
 
-3. 已分配给事务的trx_undo_t会加入到链表trx_rseg_t::insert_undo_list或者trx_rseg_t::update_undo_list上；
+3. **已分配给事务的 `trx_undo_t` 会加入到链表 `trx_rseg_t::insert_undo_list` 或者 `trx_rseg_t::update_undo_list上`**；
 
-4. 如果是数据词典操作（DDL）产生的undo，主要是表级别操作，例如创建或删除表，还需要记录操作的table id到undo log header中(TRX_UNDO_TABLE_ID)，同时将TRX_UNDO_DICT_TRANS设置为TRUE。(trx_undo_mark_as_dict_operation)。
+4. 如果是数据词典操作（DDL）产生的 Undo，主要是表级别操作，例如创建或删除表，还需要记录操作的 `table id` 到 `Undo Log Header`中（`TRX_UNDO_TABLE_ID`），同时将 `TRX_UNDO_DICT_TRANS` 设置为 **TRUE**（`trx_undo_mark_as_dict_operation`）。
 
-总的来说，undo header page主要包括如下信息： 
+总的来说，**Undo Header Page** 主要包括如下信息： 
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/undo_log_header_page_20190401.png)
+
+# Undo 日志的写入
+
+入口函数：`trx_undo_report_row_operation`
+
+当分配了一个 Undo Slot，同时初始化完可用的空闲区域后，就可以向其中写入 Undo 记录了。写入的 `page no` 取自 `undo->last_page_no`，初始情况下和 `hdr_page_no` 相同。
+
+对于 **INSERT_UNDO**，调用函数 `trx_undo_page_report_insert` 进行插入，记录格式大致如下图所示：
 
