@@ -112,3 +112,9 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 对于 **INSERT_UNDO**，调用函数 `trx_undo_page_report_insert` 进行插入，记录格式大致如下图所示：
 
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/insert_undo_format_20150401.png)
+
+对于 **UPDATE_UNDO**，调用函数 `trx_undo_page_report_modify` 进行插入，记录格式大致如下图所示：
+
+![]()
+
