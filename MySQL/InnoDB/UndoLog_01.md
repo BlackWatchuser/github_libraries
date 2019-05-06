@@ -104,7 +104,7 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/undo_log_header_page_20190401.png)
 
-# Undo 日志的写入
+## Undo 日志的写入
 
 入口函数：`trx_undo_report_row_operation`
 
@@ -118,15 +118,16 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/update_undo_format_20150401.png)
 
-在写入的过程中，可能出现单页面空间不足的情况，导致写入失败，我们需要将刚刚写入的区域清空重置(trx_undo_erase_page_end)，同时申请一个新的page(trx_undo_add_page) 加入到undo log段上，同时将undo->last_page_no指向新分配的page，然后重试。
+**在写入的过程中，可能出现单页面空间不足的情况，导致写入失败**，我们需要将刚刚写入的区域清空重置（`trx_undo_erase_page_end`），同时申请一个新的page（`trx_undo_add_page`）加入到 undo segment 上，同时将 `undo->last_page_no` 指向新分配的 page，然后重试。
 
-完成Undo log写入后，构建新的回滚段指针并返回（trx_undo_build_roll_ptr），回滚段指针包括undo log所在的回滚段id、日志所在的page no、以及page内的偏移量，需要记录到聚集索引记录中。
+完成 `Undo Log` 写入后，构建新的回滚段指针并返回（`trx_undo_build_roll_ptr`），**`回滚段指针包括 undo log 所在的回滚段id、日志所在的 page no、以及 page 内的偏移量`，需要记录到聚集索引记录中**。
 
-事务Prepare阶段
-入口函数：trx_prepare_low
+## 事务 Prepare 阶段
 
-当事务完成需要提交时，为了和BINLOG做XA，InnoDB的commit被划分成了两个阶段：prepare阶段和commit阶段，本小节主要讨论下prepare阶段undo相关的逻辑。
+入口函数：`trx_prepare_low`
 
-为了在崩溃重启时知道事务状态，需要将事务设置为Prepare，MySQL 5.7对临时表undo和普通表undo分别做了处理，前者在写undo日志时总是不需要记录redo，后者则需要记录。
+**`当事务完成需要提交时，为了和 BINLOG 做 XA，InnoDB 的 commit 被划分成了两个阶段：prepare 阶段和 commit 阶段`**，本小节主要讨论下 prepare 阶段 undo 相关的逻辑。
 
-分别设置insert undo 和 update undo的状态为prepare，调用函数trx_undo_set_state_at_prepare，过程也比较简单，找到undo log slot对应的头页面(trx_undo_t::hdr_page_no)，将页面段头的TRX_UNDO_STATE设置为TRX_UNDO_PREPARED，同时修改其他对应字段，如下图所示（对于外部显式XA所产生的XID，这里不做讨论）：
+为了在崩溃重启时知道事务状态，需要将事务设置为 **prepare**，MySQL 5.7 对临时表 undo 和普通表 undo 做了分别处理，前者在写 undo 日志时总是不需要记录 redo，后者则需要记录。
+
+分别设置 `insert undo` 和 `update undo` 的状态为 **prepare**，调用函数 `trx_undo_set_state_at_prepare`，过程也比较简单，找到 **undo log slot** 对应的头页面(trx_undo_t::hdr_page_no)，将页面段头的TRX_UNDO_STATE设置为TRX_UNDO_PREPARED，同时修改其他对应字段，如下图所示（对于外部显式XA所产生的XID，这里不做讨论）：
