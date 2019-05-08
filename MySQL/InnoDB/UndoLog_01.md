@@ -16,7 +16,7 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 为了保证事务并发操作时，写各自的 Undo Log 不产生冲突，**InnoDB 采用回滚段的方式来维护 Undo Log 的并发写入和持久化**。回滚段实际上是一种 Undo 文件组织方式，**每个回滚段又有多个 `Undo Log Slot`**。具体的文件组织方式如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/undo_segment_20190505.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/undo_segment_20190505.png)
 
 上图展示了基本的 Undo 回滚段布局结构，其中:
 
@@ -46,7 +46,7 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 各个结构体之间的联系如下：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/trx_sys_rseg_undo_20150401.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/trx_sys_rseg_undo_20150401.png)
 
 ## 回滚段的分配
 
@@ -102,7 +102,7 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 总的来说，**Undo Header Page** 主要包括如下信息： 
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/undo_log_header_page_20190401.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/undo_log_header_page_20190401.png)
 
 ## Undo 日志的写入
 
@@ -112,11 +112,11 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 对于 **INSERT_UNDO**，调用函数 `trx_undo_page_report_insert` 进行插入，记录格式大致如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/insert_undo_format_20150401.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/insert_undo_format_20150401.png)
 
 对于 **UPDATE_UNDO**，调用函数 `trx_undo_page_report_modify` 进行插入，记录格式大致如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/update_undo_format_20150401.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/update_undo_format_20150401.png)
 
 **在写入的过程中，可能出现单页面空间不足的情况，导致写入失败**，我们需要将刚刚写入的区域清空重置（`trx_undo_erase_page_end`），同时申请一个新的page（`trx_undo_add_page`）加入到 undo segment 上，同时将 `undo->last_page_no` 指向新分配的 page，然后重试。
 
@@ -130,4 +130,4 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 为了在崩溃重启时知道事务状态，需要将事务设置为 **prepare**，MySQL 5.7 对临时表 undo 和普通表 undo 做了分别处理，前者在写 undo 日志时总是不需要记录 redo，后者则需要记录。
 
-分别设置 `insert undo` 和 `update undo` 的状态为 **prepare**，调用函数 `trx_undo_set_state_at_prepare`，过程也比较简单，找到 **undo log slot** 对应的头页面(trx_undo_t::hdr_page_no)，将页面段头的TRX_UNDO_STATE设置为TRX_UNDO_PREPARED，同时修改其他对应字段，如下图所示（对于外部显式XA所产生的XID，这里不做讨论）：
+分别设置 `insert undo` 和 `update undo` 的状态为 **prepare**，调用函数 `trx_undo_set_state_at_prepare`，过程也比较简单，找到 **undo log slot** 对应的头页面（`trx_undo_t::hdr_page_no`)，将页面段头的TRX_UNDO_STATE设置为TRX_UNDO_PREPARED，同时修改其他对应字段，如下图所示（对于外部显式XA所产生的XID，这里不做讨论）：
