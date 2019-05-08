@@ -130,7 +130,7 @@ log_sys->max_checkpoint_age = 13914979615 (81%)
 
 `log_sys` 与日志文件及日志缓冲区的关系可用下图来表示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/log_sys_20150501.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/log_sys_20150501.png)
 
 ## Mini Transaction
 
@@ -284,7 +284,7 @@ mlog_close(mtr, log_ptr + rec_size);
 
 至此一条插入操作产生的 mtr 日志格式有可能如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/mtr_log_20150501.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/mtr_log_20150501.png)
 
 **Step 2：`mtr_t::Command::finish_write`**
 
@@ -311,7 +311,7 @@ mlog_close(mtr, log_ptr + rec_size);
 
 注意：**`log buffer 遵循一定的格式，它以 512 字节对齐，和 redo log 文件的 block size 必须完全匹配`**。由于以固定 block size 组织结构，因此一个 block 中可能包含多个 mtr 提交的记录，也可能一个 mtr 的日志占用多个 block。如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/redo_log_buffer_20150501.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/redo_log_buffer_20150501.png)
 
 **Step 3**：如果本次修改产生了脏页，获取 `log_sys->log_flush_order_mutex`，随后释放 `log_sys->mutex`。
 
@@ -347,7 +347,7 @@ mlog_close(mtr, log_ptr + rec_size);
 
 下图表示了不同配置值的持久化程度：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/innodb_flush_log_at_trx_commit_20150501.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/innodb_flush_log_at_trx_commit_20150501.png)
 
 显然对性能的影响是随着持久化程度的增加而增加的。通常我们建议在日常场景将该值设置为1，但在系统高峰期临时修改成2以应对大负载。
 
@@ -415,7 +415,7 @@ redo checkpoint 的入口函数为 `log_checkpoint`，其执行流程如下：
 
 大致结构如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/log_checkpoint_20150501.png)
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/log_checkpoint_20150501.png)
 
 **`在 crash recovery 重启时，会读取记录在 checkpoint 中的 lsn 信息，然后从该 lsn 开始扫描 redo 日志`**。
 
