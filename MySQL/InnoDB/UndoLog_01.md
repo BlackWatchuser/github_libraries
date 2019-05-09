@@ -142,115 +142,125 @@ Tips：InnoDB 层的 XID 是如何获取的呢？**当 InnoDB 的参数 `innodb_
 
 入口函数：`trx_commit_low-->trx_write_serialisation_history`
 
-在该函数中，需要将该事务包含的Undo都设置为完成状态，先设置insert undo，再设置update undo（trx_undo_set_state_at_finish），完成状态包含三种：
+在该函数中，**需要将该事务包含的 Undo 都设置为完成状态，先设置 insert undo，再设置 update undo（`trx_undo_set_state_at_finish`）**，完成状态包含三种：
 
-如果当前的undo log只占一个page，且占用的header page大小使用不足其3/4时(TRX_UNDO_PAGE_REUSE_LIMIT)，则状态设置为TRX_UNDO_CACHED，该undo对象会随后加入到undo cache list上；
-如果是Insert_undo（undo类型为TRX_UNDO_INSERT），则状态设置为TRX_UNDO_TO_FREE；
-如果不满足a和b，则表明该undo可能需要Purge线程去执行清理操作，状态设置为TRX_UNDO_TO_PURGE。
-在确认状态信息后，写入undo header page的TRX_UNDO_STATE中。
+* 如果当前的 undo log 只占一个 page，且占用的 header page 大小使用不足其 **3/4** 时（`TRX_UNDO_PAGE_REUSE_LIMIT`），则状态设置为 **`TRX_UNDO_CACHED`**，该 undo 对象随后会加入到 `undo cache list` 上；
 
-如果当前事务包含update undo，并且undo所在回滚段不在purge队列时，还需要将当前undo所在的回滚段（及当前最大的事务号）加入Purge线程的Purge队列（purge_sys->purge_queue）中（参考函数trx_serialisation_number_get）。
+* 如果是 insert_undo（undo 类型为 `TRX_UNDO_INSERT`），则状态设置为 **`TRX_UNDO_TO_FREE`**；
 
-对于undate undo需要调用trx_undo_update_cleanup进行清理操作，清理的过程包括：
+* 如果不满足 a 和 b，则表明该 Undo 可能需要 Purge 线程去执行清理操作，状态设置为 **`TRX_UNDO_TO_PURGE`**。
 
-将undo log加入到history list上，调用trx_purge_add_update_undo_to_history：
+在确认状态信息后，写入 `undo header page` 的 **TRX_UNDO_STATE** 中。
 
-如果该undo log不满足cache的条件（状态为TRX_UNDO_CACHED，如上述），则将其占用的slot设置为FIL_NULL，意为slot空闲，同时更新回滚段头的TRX_RSEG_HISTORY_SIZE值，将当前undo占用的page数累加上去；
+如果当前事务包含 update undo，并且 Undo 所在回滚段不在 Purge 队列时，还需要将当前 Undo 所在的回滚段（及当前最大的事务号）加入 Purge 线程的 Purge 队列（`purge_sys->purge_queue`）中（参考函数：`trx_serialisation_number_get`）。
 
-将当前undo加入到回滚段的TRX_RSEG_HISTORY链表上，作为链表头节点，节点指针为UNDO头的TRX_UNDO_HISTORY_NODE；
+对于 update undo 需要调用 `trx_undo_update_cleanup` 进行清理操作，清理的过程包括：
 
-更新trx_sys->rseg_history_len（也就是show engine innodb status看到的history list），如果只有普通的update_undo，则加1，如果还有临时表的update_undo，则加2，然后唤醒purge线程；
+1. 将 undo log 加入到 **`history list上`**，调用：`trx_purge_add_update_undo_to_history`：
 
-将当前事务的trx_t::no写入undo头的TRX_UNDO_TRX_NO段；
+    * 如果该 undo log 不满足 cache 的条件（状态为 `TRX_UNDO_CACHED`，如上述），则将其占用的 slot 设置为 **`FIL_NULL`**，意为 slot 空闲，同时更新回滚段头的 `TRX_RSEG_HISTORY_SIZE` 值，将当前 undo 占用的 page 数累加上去；
 
-如果不是delete-mark操作，将undo头的TRX_UNDO_DEL_MARKS更新为false;
+    * 将当前 undo 加入到回滚段的 **`TRX_RSEG_HISTORY`** 链表上，作为链表头节点，节点指针为 UNDO 头的 `TRX_UNDO_HISTORY_NODE`；
 
-如果undo所在回滚段的rseg->last_page_no为FIL_NULL，表示该回滚段的旧的清理已经完成，进行如下赋值，记录这个回滚段上第一个需要purge的undo记录信息：
+    * 更新 `trx_sys->rseg_history_len`（也就是 **show engine innodb status** 看到的 **history list**），如果只有普通的 update_undo，则加1，如果还有临时表的 update_undo，则加2，然后唤醒 purge 线程；
 
-  rseg->last_page_no = undo->hdr_page_no;
-  rseg->last_offset = undo->hdr_offset;
-  rseg->last_trx_no = trx->no;
-  rseg->last_del_marks = undo->del_marks;
-如果undo需要cache，将undo对象放到回滚段的update_undo_cached链表上；否则释放undo对象（trx_undo_mem_free）。
+    * 将当前事务的 `trx_t::no` 写入 undo 头的 `TRX_UNDO_TRX_NO` 段；
 
-注意上面只清理了update_undo，insert_undo直到事务释放记录锁、从读写事务链表清除、以及关闭read view后才进行，调用函数trx_undo_insert_cleanup：
+    * 如果不是 **delete-mark** 操作，将 undo 头的 `TRX_UNDO_DEL_MARKS` 更新为 **false**;
 
-如果Undo状态为TRX_UNDO_CACHED，则加入到回滚段的insert_undo_cached链表上；
+    * 如果 undo 所在回滚段的 `rseg->last_page_no` 为 **FIL_NULL**，表示该回滚段的旧记录清理已经完成，进行如下赋值，记录这个回滚段上第一个需要 purge 的 undo 记录信息：
 
-否则，将该undo所占的segment及其所占用的回滚段的slot全部释放掉（trx_undo_seg_free），修改当前回滚段的大小(rseg->curr_size)，并释放undo对象所占的内存（trx_undo_mem_free），和Update_undo不同，insert_undo并未放到History list上。
+    ```
+    rseg->last_page_no = undo->hdr_page_no;
+    rseg->last_offset = undo->hdr_offset;
+    rseg->last_trx_no = trx->no;
+    rseg->last_del_marks = undo->del_marks;
+    ```
 
-事务完成提交后，需要将其使用的回滚段引用计数rseg->trx_ref_count减1；
+2. 如果 undo 需要 cache，将 undo 对象放到回滚段的 **`update_undo_cached`** 链表上；否则释放 undo 对象（`trx_undo_mem_free`）。
 
-事务回滚
-如果事务因为异常或者被显式的回滚了，那么所有数据变更都要改回去。这里就要借助回滚日志中的数据来进行恢复了。
+注意：上面只清理了 **update_undo**，**insert_undo** 的清理直到事务释放记录锁、从读写事务链表清除、以及关闭 readview 后才进行，调用函数 `trx_undo_insert_cleanup`：
 
-入口函数为：row_undo_step --> row_undo
+1. 如果 undo 状态为 **`TRX_UNDO_CACHED`**，则加入到回滚段的 **`insert_undo_cached`** 链表上；
 
-操作也比较简单，析取老版本记录，做逆向操作即可：对于标记删除的记录清理标记删除标记；对于in-place更新，将数据回滚到最老版本；对于插入操作，直接删除聚集索引和二级索引记录（row_undo_ins）。
+2. 否则，将该 undo 所占的 segment 及其所占用的回滚段的 slot 全部释放掉（`trx_undo_seg_free`），修改当前回滚段的大小（`rseg->curr_size`），并释放 undo 对象所占的内存（`trx_undo_mem_free`），**`和 update_undo 不同，insert_undo 并未放到 History List 上`**。
 
-具体的操作中，先回滚二级索引记录（row_undo_mod_del_mark_sec、row_undo_mod_upd_exist_sec、row_undo_mod_upd_del_sec），再回滚聚集索引记录（row_undo_mod_clust）。这里不展开描述，可以参阅对应的函数。
+事务完成提交后，需要将其使用的回滚段引用计数 `rseg->trx_ref_count` 减1；
 
-多版本控制
-InnoDB的多版本使用undo来构建，这很好理解，undo记录中包含了记录更改前的镜像，如果更改数据的事务未提交，对于隔离级别大于等于read commit的事务而言，它不应该看到已修改的数据，而是应该给它返回老版本的数据。
+## 事务的回滚
 
-入口函数： row_vers_build_for_consistent_read
+如果事务因为异常或被显式回滚，那么所有的数据变更都要改回去。这里就要借助 undo 日志中的数据来进行恢复了。
 
-由于在修改聚集索引记录时，总是存储了回滚段指针和事务id，可以通过该指针找到对应的undo 记录，通过事务Id来判断记录的可见性。当旧版本记录中的事务id对当前事务而言是不可见时，则继续向前构建，直到找到一个可见的记录或者到达版本链尾部。（关于事务可见性及read view，可以参阅我们之前的月报）
+入口函数为：`row_undo_step --> row_undo`
 
-Tips 1：构建老版本记录（trx_undo_prev_version_build）需要持有page latch，因此如果Undo链太长的话，其他请求该page的线程可能等待时间过长导致crash，最典型的就是备库备份场景：
+操作也比较简单，析取老版本记录，做逆向操作即可：**`对于标记删除的记录清理标记删除标记；对于 in-place 更新，将数据回滚到最老版本；对于插入操作，直接删除聚集索引和二级索引记录（row_undo_ins）`**。
 
-当备库使用innodb表存储复制位点信息时（relay_log_info_repository=TABLE），逻辑备份显式开启一个read view并且执行了长时间的备份时，这中间都无法对slave_relay_log_info表做purge操作，导致版本链极其长；当开始备份slave_relay_log_info表时，就需要去花很长的时间构建老版本；复制线程由于需要更新slave_relay_log_info表，因此会陷入等待Page latch的场景，最终有可能导致信号量等待超时，实例自杀。 （bug#74003）
+具体的操作中，**先回滚二级索引记录（`row_undo_mod_del_mark_sec`、`row_undo_mod_upd_exist_sec`、`row_undo_mod_upd_del_sec`），再回滚聚集索引记录（`row_undo_mod_clust`）**。这里不展开描述，可以参阅对应的函数。
 
-Tips 2：在构建老版本的过程中，总是需要创建heap来存储旧版本记录，实际上这个heap是可以重用的，无需总是重复构建（bug#69812）
+## 多版本并发控制
 
-Tips 3：如果回滚段类型是INSERT，就完全没有必要去看Undo日志了，因为一个未提交事务的新插入记录，对其他事务而言总是不可见的。
+InnoDB 的多版本使用 undo 来构建，这很好理解，undo 记录中包含了记录更改前的镜像，如果更改数据的事务未提交，对于隔离级别大于等于 **Read Committed** 的事务而言，它不应该看到已修改的数据，而是应该给它返回老版本的数据。
 
-Tips 4: 对于聚集索引我们知道其记录中存有修改该记录的事务id，我们可以直接判断是否需要构建老版本(lock_clust_rec_cons_read_sees)，但对于二级索引记录，并未存储事务id，而是每次更新记录时，同时更新记录所在的page上的事务id（PAGE_MAX_TRX_ID），如果该事务id对当前事务是可见的，那么就无需去构建老版本了，否则就需要去回表查询对应的聚集索引记录，然后判断可见性（lock_sec_rec_cons_read_sees）。
+入口函数：`row_vers_build_for_consistent_read`
 
-Purge清理操作
-从上面的分析我们可以知道：update_undo产生的日志会放到history list中，当这些旧版本无人访问时，需要进行清理操作；另外页内标记删除的操作也需要从物理上清理掉。后台Purge线程负责这些工作。
+**`由于在修改聚集索引记录时，总是存储了 回滚段指针 和 事务id，可以通过该指针找到对应的 undo 记录，通过事务id来判断记录的可见性`**。当旧版本记录中的事务id对当前事务而言是不可见时，则继续向前构建，直到找到一个可见的记录或者到达版本链尾部（关于事务可见性及 read view，可以参阅我们之前的月报）。
 
-入口函数：srv_do_purge --> trx_purge
+Tips 1：**构建老版本记录（`trx_undo_prev_version_build`）需要持有 page latch，因此如果 Undo 链太长的话，其他请求该 page 的线程可能等待时间过长导致 Crash，最典型的就是备库备份场景**：
 
-确认可见性
+当备库使用 InnoDB 表存储复制位点信息时（`relay_log_info_repository=TABLE`），逻辑备份显式开启一个 read view 并且执行了长时间的备份时，这中间都无法对 **slave_relay_log_info** 表做 purge 操作，导致版本链极其长；当开始备份 **slave_relay_log_info** 表时，就需要去花很长的时间构建老版本；复制线程由于需要更新 slave_relay_log_info 表，因此会陷入等待 page latch 的场景，最终有可能导致信号量等待超时，实例自杀（[bug#74003](https://bugs.mysql.com/bug.php?id=74003)）。
 
-在开始尝试purge前，purge线程会先克隆一个最老的活跃视图（trx_sys->mvcc->clone_oldest_view），所有在readview开启之前提交的事务所做的事务变更都是可以清理的。
+Tips 2：在构建老版本的过程中，总是需要创建 heap 来存储旧版本记录，实际上这个 heap 是可以重用的，无需总是重复构建（[bug#69812](https://bugs.mysql.com/bug.php?id=69812)）。
 
-获取需要purge的undo记录（trx_purge_attach_undo_recs）
+Tips 3：如果回滚段类型是 INSERT，就完全没有必要去看 Undo 日志了，因为一个未提交事务的新插入记录，对其他事务而言总是不可见的。
 
-从history list上读取多个Undo记录，并分配到多个purge线程的工作队列上（(purge_node_t*) thr->child->undo_recs），默认一次最多取300个undo记录，可通过参数innodb_purge_batch_size参数调整。
+Tips 4：对于聚集索引我们知道其记录中存有修改该记录的事务id，我们可以直接判断是否需要构建老版本（`lock_clust_rec_cons_read_sees`），但 **`对于二级索引记录，并未存储事务id，而是每次更新记录时，同时更新记录所在的 page 上的事务id（PAGE_MAX_TRX_ID），如果该事务id对当前事务是可见的，那么就无需去构建老版本了，否则就需要去回表查询对应的聚集索引记录，然后判断可见性（lock_sec_rec_cons_read_sees）`**。
 
-Purge工作线程
+## Purge 清理操作
 
-当完成任务的分发后，各个工作线程（包括协调线程）开始进行purge操作 入口函数： row_purge_step -> row_purge -> row_purge_record_func
+从上面的分析我们可以知道：**`update_undo 产生的日志会放到 history list 中，当这些旧版本无人访问时，需要进行清理操作；另外页内标记删除的操作也需要从物理上清理掉`**。**后台 Purge 线程负责这些工作**。
 
-主要包括两种：一种是记录直接被标记删除了，这时候需要物理清理所有的聚集索引和二级索引记录（row_purge_record_func）；另一种是聚集索引in-place更新了，但二级索引上的记录顺序可能发生变化，而二级索引的更新总是标记删除 + 插入，因此需要根据回滚段记录去检查二级索引记录序是否发生变化，并执行清理操作（row_purge_upd_exist_or_extern）。
+入口函数：`srv_do_purge --> trx_purge`
 
-清理history list
+1. 确认可见性
 
-从前面的分析我们知道，insert undo在事务提交后，Undo segment 就释放了。而update undo则加入了history list，为了将这些文件空间回收重用，需要对其进行truncate操作；默认每处理128轮Purge循环后，Purge协调线程需要执行一次purge history List操作。
+    在开始尝试 purge 前，Purge 线程会先克隆一个最老的活跃视图（`trx_sys->mvcc->clone_oldest_view`），所有在 read view 开启之前提交的事务所做的事务变更都是可以清理的。
 
-入口函数：trx_purge_truncate --> trx_purge_truncate_history
+2. 获取需要 purge 的 undo 记录（`trx_purge_attach_undo_recs`）
 
-从回滚段的HISTORY 文件链表上开始遍历释放Undo log segment，由于history 链表是按照trx no有序的，因此遍历truncate直到完全清除，或者遇到一个还未purge的undo log（trx no比当前purge到的位置更大）时才停止。
+    从 history list 上读取多个 undo 记录，并分配到多个 Purge 线程的工作队列上（`(purge_node_t*) thr->child->undo_recs`），默认一次最多取 300 个 undo 记录，可通过参数 `innodb_purge_batch_size` 参数调整。
 
-关于Purge操作的逻辑实际上还算是比较复杂的代码模块，这里只是简单的介绍了下，以后有时间再展开描述。
+3. Purge 工作线程
 
-崩溃恢复
-当实例从崩溃中恢复时，需要将活跃的事务从undo中提取出来，对于ACTIVE状态的事务直接回滚，对于Prepare状态的事务，如果该事务对应的binlog已经记录，则提交，否则回滚事务。
+    当完成任务的分发后，各个工作线程（包括协调线程）开始进行 purge 操作；入口函数：`row_purge_step -> row_purge -> row_purge_record_func`。
 
-实现的流程也比较简单，首先先做redo (recv_recovery_from_checkpoint_start)，undo是受redo 保护的，因此可以从redo中恢复（临时表undo除外，临时表undo是不记录redo的）。
+    主要包括两种：一种是记录直接被标记删除了，这时候需要物理清理所有的聚集索引和二级索引记录（`row_purge_record_func`）；另一种是 **`聚集索引 in-place 更新`** 了，但二级索引上的记录顺序可能发生变化，而**二级索引的更新总是标记删除 + 插入**，因此需要根据回滚段记录去检查二级索引记录序是否发生变化，并执行清理操作（`row_purge_upd_exist_or_extern`）。
 
-在redo日志应用完成后，初始化完成数据词典子系统（dict_boot），随后开始初始化事务子系统（trx_sys_init_at_db_start），undo 段的初始化即在这一步完成。
+4. 清理 history list
 
-在初始化undo段时(trx_sys_init_at_db_start -> trx_rseg_array_init -> ... -> trx_undo_lists_init)，会根据每个回滚段page中的slot是否被使用来恢复对应的undo log，读取其状态信息和类型等信息，创建内存结构，并存放到每个回滚段的undo list上。
+    从前面的分析我们知道，insert undo 在事务提交后，Undo Segment 就释放了。而 update undo 则加入了 history list，为了将这些文件空间回收重用，需要对其进行 **truncate** 操作；默认每处理 128 轮 Purge 循环后，Purge 协调线程需要执行一次 purge history list 操作。
 
-当初始化完成undo内存对象后，就要据此来恢复崩溃前的事务链表了(trx_lists_init_at_db_start)，根据每个回滚段的insert_undo_list来恢复插入操作的事务(trx_resurrect_insert)，根据update_undo_list来恢复更新事务(tex_resurrect_update)，如果既存在插入又存在更新，则只恢复一个事务对象。另外除了恢复事务对象外，还要恢复表锁及读写事务链表，从而恢复到崩溃之前的事务场景。
+    入口函数：`trx_purge_truncate --> trx_purge_truncate_history`
 
-当从Undo恢复崩溃前活跃的事务对象后，会去开启一个后台线程来做事务回滚和清理操作（recv_recovery_rollback_active -> trx_rollback_or_clean_all_recovered），对于处于ACTIVE状态的事务直接回滚，对于既不ACTIVE也非PREPARE状态的事务，直接则认为其是提交的，直接释放事务对象。但完成这一步后，理论上事务链表上只存在PREPARE状态的事务。
+    从回滚段的 HISTORY 文件链表上开始遍历释放 Undo Log Segment，由于 history 链表是按照 trx no 有序的，因此遍历 truncate 直到完全清除，或者遇到一个还未 purge 的 undo log（trx no 比当前 purge 到的位置更大）时才停止。
 
-随后很快我们进入XA Recover阶段，MySQL使用内部XA，即通过Binlog和InnoDB做XA恢复。在初始化完成引擎后，Server层会开始扫描最后一个Binlog文件，搜集其中记录的XID（MYSQL_BIN_LOG::recover），然后和InnoDB层的事务XID做对比。如果XID已经存在于binlog中了，对应的事务需要提交；否则需要回滚事务。
+关于 Purge 操作的逻辑实际上还算是比较复杂的代码模块，这里只是简单的介绍了下，以后有时间再展开描述。
 
-Tips：为何只需要扫描最后一个binlog文件就可以了？ 因为在每次rotate到一个新的binlog文件之前，总是要保证前一个binlog文件中对应的事务都提交并且sync redo到磁盘了，也就是说，前一个binlog文件中的事务在崩溃恢复时肯定是出于提交状态的。
+## 崩溃恢复
+
+**`当实例从崩溃中恢复时，需要将活跃的事务从 Undo 中提取出来，对于 ACTIVE 状态的事务直接回滚，对于 Prepare 状态的事务，如果该事务对应的 binlog 已经记录，则提交，否则回滚事务`**。
+
+实现的流程也比较简单，首先先做 Redo（`recv_recovery_from_checkpoint_start`），Undo 是受 Redo 保护的，因此可以从 Redo 中恢复（临时表 Undo 除外，临时表 Undo 是不记录 Redo 的）。
+
+在 Redo 日志应用完成后，完成初始化数据字典子系统（**dict_boot**），随后开始初始化事务子系统（`trx_sys_init_at_db_start`），Undo 段的初始化即在这一步完成。
+
+在初始化 Undo 段时（`trx_sys_init_at_db_start -> trx_rseg_array_init -> ... -> trx_undo_lists_init`），会根据每个回滚段 page 中的 slot 是否被使用来恢复对应的 undo log，读取其状态信息和类型等信息，创建内存结构，并存放到每个回滚段的 undo list 上。
+
+当初始化完成 Undo 内存对象后，就要据此来恢复崩溃前的事务链表了（`trx_lists_init_at_db_start`），根据每个回滚段的 **`insert_undo_list`** 来恢复插入操作的事务（`trx_resurrect_insert`），根据 **`update_undo_list`** 来恢复更新事务（`trx_resurrect_update`），如果既存在插入又存在更新，则只恢复一个事务对象。另外除了恢复事务对象外，还要恢复表锁及读写事务链表，从而恢复到崩溃之前的事务场景。
+
+当从 Undo 恢复崩溃前活跃的事务对象后，会去开启一个后台线程来做事务回滚和清理操作（`recv_recovery_rollback_active -> trx_rollback_or_clean_all_recovered`），**`对于处于 ACTIVE 状态的事务直接回滚，对于既不 ACTIVE 也非 PREPARE 状态的事务，直接则认为其是提交的，直接释放事务对象。但完成这一步后，理论上事务链表上只存在 PREPARE 状态的事务`**。
+
+随后很快我们进入 **XA Recover** 阶段，MySQL 使用 **`内部 XA，即通过 Binlog 和 InnoDB 做 XA 恢复。在初始化完成引擎后，Server 层会开始扫描最后一个 Binlog 文件，搜集其中记录的 XID（MYSQL_BIN_LOG::recover），然后和InnoDB 层的事务 XID 做对比。如果 XID 已经存在于 Binlog 中了，对应的事务需要提交；否则需要回滚事务`**。
+
+Tips：为何只需要扫描最后一个 binlog 文件就可以了？因为 **`在每次 Rotate 到一个新的 binlog 文件之前，总是要保证前一个 binlog 文件中对应的事务都提交并且 sync redo 到磁盘了`**，也就是说，前一个 binlog 文件中的事务在崩溃恢复时肯定是出于提交状态的。
 
 ******
