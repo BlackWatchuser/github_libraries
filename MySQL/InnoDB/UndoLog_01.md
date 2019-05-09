@@ -130,4 +130,5 @@ Undo 记录中存储的是老版本数据，`当一个旧的事务需要读取�
 
 为了在崩溃重启时知道事务状态，需要将事务设置为 **prepare**，MySQL 5.7 对临时表 undo 和普通表 undo 做了分别处理，前者在写 undo 日志时总是不需要记录 redo，后者则需要记录。
 
-分别设置 `insert undo` 和 `update undo` 的状态为 **prepare**，调用函数 `trx_undo_set_state_at_prepare`，过程也比较简单，找到 **undo log slot** 对应的头页面（`trx_undo_t::hdr_page_no`)，将页面段头的TRX_UNDO_STATE设置为TRX_UNDO_PREPARED，同时修改其他对应字段，如下图所示（对于外部显式XA所产生的XID，这里不做讨论）：
+分别设置 `insert undo` 和 `update undo` 的状态为 **prepare**，调用函数 `trx_undo_set_state_at_prepare`，过程也比较简单，找到 **undo log slot** 对应的头页面（`trx_undo_t::hdr_page_no`)，将页面段头的 **TRX_UNDO_STATE** 设置为 `TRX_UNDO_PREPARED`，同时修改其他对应字段，如下图所示（对于外部显式XA 所产生的 XID，这里不做讨论）：
+
