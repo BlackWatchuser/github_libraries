@@ -208,54 +208,71 @@ SAVEPOINT 链表
 
 总共分为以下几步：
 
-在增加新的SAVEPOINT时，总是先判断下是否同名的SAVEPOINT已经存在，如果存在，就用后者替换前者；
-Server层维护的savepoint信息记录了命名信息及MDL锁的savepoint点。其中MDL锁的savepoint，可以实现回滚操作时释放该savepoint之后再获得的MDL锁；
-在当前线程的Binlog cache中写入设置Savepoint的SQL, 并保存binlog cache中的位点 （binlog_savepoint_set）；
-引擎层的savepoint中记录了最近一次的trx_t::undo_no及SAVEPOINT名字。通过这些信息可以准确的定位在设置SAVEPOINT点时Undo位点。（参阅引擎层入口函数：trx_savepoint_for_mysql）。
-回滚SAVEPOINT
+1. 在增加新的 SAVEPOINT 时，总是先判断下是否同名的 SAVEPOINT 已经存在，如果存在，就用后者替换前者；
 
-语法：ROLLBACK TO [ SAVEPOINT ] sp_name 入口函数：trans_rollback_to_savepoint
+2. Server 层维护的 savepoint 信息记录了命名信息及 MDL 锁的 savepoint 点。其中 MDL 锁的 savepoint，可以实现回滚操作时释放该 savepoint 之后再获得的 MDL 锁；
+
+3. 在当前线程的 Binlog Cache 中写入设置 savepoint 的 SQL，并保存 binlog cache 中的位点（`binlog_savepoint_set`）；
+
+4. 引擎层的 SAVEPOINT 中记录了最近一次的 `trx_t::undo_no` 及 SAVEPOINT 名字。通过这些信息可以准确的定位在设置 SAVEPOINT 点时 Undo 位点。（参阅引擎层入口函数：`trx_savepoint_for_mysql`）。
+
+### 回滚 SAVEPOINT
+
+语法：`ROLLBACK TO [ SAVEPOINT ] sp_name` 
+
+入口函数：`trans_rollback_to_savepoint`
 
 检查点的回滚主要包括：
 
-如果事务是一个XA事务，且已经处于XA PREPARE状态时是不允许回滚到某个SAVEPOINT的；
-如果涉及非事务引擎，在binlog中写入回滚SQL，否则直接将binlog cache truncate到之前设置sp时保存的位点。（binlog_savepoint_rollback）
-在引擎层进行回滚（trx_rollback_to_savepoint_for_mysql） 根据之前记录的undo_no，可以逆向操作当前事务占用的undo slot上的undo记录来进行回滚。
-判断是否允许回滚MDL锁：
-binlog关闭的情况下，总是允许回滚MDL锁
-或者由引擎来确认（ha_rollback_to_savepoint_can_release_mdl），同时满足：
-InnoDB：如果当前事务不持有任何事务锁（表级或者行级），则认为可以回滚MDL锁
-Binlog：如果没有更改非事务引擎，则可以释放MDL锁
-如果允许回滚MDL，则通过之前记录的st_savepoint::mdl_savepoint进行回滚
+1. 如果事务是一个 XA 事务，且已经处于 XA PREPARE 状态时是不允许回滚到某个 SAVEPOINT 的；
 
-释放SAVEPOINT
+2. 如果涉及非事务引擎，在 binlog 中写入回滚 SQL，否则直接将 binlog cache truncate 到之前设置 sp 时保存的位点（`binlog_savepoint_rollback`）。
 
-语法为：RELEASE SAVEPOINT sp_name 入口函数：trans_rollback_to_savepoint
+3. 在引擎层进行回滚（`trx_rollback_to_savepoint_for_mysql`）根据之前记录的 `undo_no`，可以逆向操作当前事务占用的 `undo slot` 上的 Undo 记录来进行回滚。
 
-顾名思义，就是删除一个SAVEPOINT，操作也很简单，直接根据命名从server层和innodb层的清理掉，并释放对应的内存。
+4. 判断是否允许回滚 MDL 锁：
 
-隐式SAVEPOINT
+    * Binlog 关闭的情况下，总是允许回滚 MDL 锁
 
-在InnoDB中，还有一种隐式的savepoint，通过变量trx_t::last_sql_stat_start来维护。
+    * 或者由引擎来确认（`ha_rollback_to_savepoint_can_release_mdl`），同时满足：
 
-初始状态下trx_t::last_sql_stat_start的值为0，当执行完一条SQL时，会调用函数trx_mark_sql_stat_end将当前的trx_t::undo_no保存到trx_t::last_sql_stat_start中。
+        * InnoDB：如果当前事务不持有任何事务锁（表级或者行级），则认为可以回滚 MDL 锁；
 
-如果SQL执行失败，就可以据此进行statement级别的回滚操作（trx_rollback_last_sql_stat_for_mysql）。
+        * Binlog：如果没有更改非事务引擎，则可以释放 MDL 锁；
 
-无论是显式SAVEPOINT还是隐式SAVEPOINT，都是通过undo_no来指示回滚到哪个事务状态。
+如果允许回滚 MDL，则通过之前记录的 `st_savepoint::mdl_savepoint` 进行回滚。
 
-两个有趣的bug
+### 释放 SAVEPOINT
 
-bug#79493
+语法为：`RELEASE SAVEPOINT sp_name` 
 
-在一个只读事务中，如果设置了SAVEPOINT，任意执行一次ROLLBACK TO SAVEPOINT都会将事务从只读模式改变成读写模式。这主要是因为在活跃事务中执行ROLLBACK 操作会强制转换READ-WRITE模式。实际上这是没必要的，因为并没有造成任何的数据变更。
+入口函数：`trans_rollback_to_savepoint`
 
-bug#79596
+顾名思义，就是删除一个 SAVEPOINT，操作也很简单，直接根据命名从 Server 层和 InnoDB 层的清理掉，并释放对应的内存。
 
-这个bug可以认为是一个相当严重的bug：在一个活跃的做过数据变更操作的事务中，任意执行一次ROLLBACK TO SAVEPOINT（即使SAVEPOINT不存在），然后kill掉客户端，会发现事务却提交了，并且没有写到binlog中。这会导致主备的数据不一致。
+### 隐式 SAVEPOINT
+
+在 InnoDB 中，还有一种隐式的 savepoint，通过变量 **`trx_t::last_sql_stat_start`** 来维护。
+
+初始状态下 **`trx_t::last_sql_stat_start`** 的值为0，当执行完一条 SQL 时，会调用函数 `trx_mark_sql_stat_end` 将当前的 `trx_t::undo_no` 保存到 `trx_t::last_sql_stat_start` 中。
+
+如果 SQL 执行失败，就可以据此进行 statement 级别的回滚操作（`trx_rollback_last_sql_stat_for_mysql`）。
+
+**`无论是显式 SAVEPOINT 还是隐式 SAVEPOINT，都是通过 undo_no 来指示回滚到哪个事务状态`**。
+
+### 两个有趣的bug
+
+[bug#79493](https://bugs.mysql.com/bug.php?id=79493)
+
+在一个只读事务中，如果设置了 SAVEPOINT，任意执行一次 ROLLBACK TO SAVEPOINT 都会将事务从只读模式改变成读写模式。这主要是因为在活跃事务中执行 ROLLBACK 操作会强制转换 READ-WRITE 模式。实际上这是没必要的，因为并没有造成任何的数据变更。
+
+[bug#79596](https://bugs.mysql.com/bug.php?id=79596)
+
+这个 bug 可以认为是一个相当严重的 bug：在一个活跃的做过数据变更操作的事务中，任意执行一次 ROLLBACK TO SAVEPOINT（即使 SAVEPOINT 不存在），然后 kill 掉客户端，会发现事务却提交了，并且没有写到 binlog 中。这会导致主备的数据不一致。
 
 重现步骤如下：
 
+``` sql
 mysql> create table test (value int) engine=innodb;
 Query OK, 0 rows affected (3.88 sec)
 
@@ -268,9 +285,12 @@ Query OK, 1 row affected (4.43 sec)
 mysql> rollback to savepoint tx_0;
 ERROR 1305 (42000): SAVEPOINT tx_0 does not exist
 mysql> Killed
-最后一步直接对session的进程kill -9时会导致事务commit。这主要是因为如果直接kill客户端，服务器端在清理线程资源，进行事务回滚时，相关的变量并没有被重设，thd的command类型还是SQLCOM_ROLLBACK_TO_SAVEPOINT，在函数MYSQL_BIN_LOG::rollback函数中将不会调用ha_rollback_low的引擎层回滚逻辑。原因是回滚到某个savepoint有特殊的处理流程，如果是通过ctrl+c的方式关闭client端，实际上会发送一个类型为COM_QUIT的command，它会将thd->lex->sql_command设置为SQLCOM_END，这时候会走正常的回滚逻辑。
+```
 
-事务执行管理
+最后一步直接对 Session 的进程 kill -9 时会导致事务 commit。这主要是因为如果直接 kill 客户端，服务器端在清理线程资源，进行事务回滚时，相关的变量并没有被重设，thd 的 command 类型还是 `SQLCOM_ROLLBACK_TO_SAVEPOINT`，在 `MYSQL_BIN_LOG::rollback` 函数中将不会调用 `ha_rollback_low` 的引擎层回滚逻辑。原因是回滚到某个 savepoint 有特殊的处理流程，如果是通过 ctrl+c 的方式关闭 client 端，实际上会发送一个类型为 `COM_QUIT` 的 command，它会将 `thd->lex->sql_command` 设置为 `SQLCOM_END`，这时候会走正常的回滚逻辑。
+
+## 事务执行管理
+
 在事务执行的过程中，需要多个模块来辅助事务的正常执行：
 
 Server层的MDL锁模块，维持了一个事务过程中所有涉及到的表级锁对象。通过MDL锁，可以堵塞DDL，避免DDL和DML记录binlog乱序；
