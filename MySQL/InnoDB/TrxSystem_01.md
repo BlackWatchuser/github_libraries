@@ -100,95 +100,111 @@ if (total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log))
 
 这三者是TC_LOG的子类，关系如下图所示：
 
-
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/TC_LOG_20151201.png)
 
 TC LOG
-TC LOG
 
-具体的，包含以下几种类型的XA（不对数据产生变更的只读事务无需走XA）
+具体的，包含以下几种类型的 XA（不对数据产生变更的只读事务无需走 XA）
 
-Binlog/Engine XA
-当开启binlog时, MySQL默认使用该隐式XA模式。 在5.7版本中，事务的提交流程包括：
+### Binlog/Engine XA
 
-Binlog Prepare 设置thd->durability_property= HA_IGNORE_DURABILITY, 表示在innodb prepare时，不刷redo log。
+当开启 Binlog 时, MySQL 默认使用该 **隐式XA** 模式。 在 5.7 版本中，事务的提交流程包括：
 
-InnoDB Prepare （入口函数innobase_xa_prepare --> trx_prepare）： 更新InnoDB的undo回滚段，将其设置为Prepare状态（TRX_UNDO_PREPARED）。
+**Binlog Prepare** 设置 `thd->durability_property= HA_IGNORE_DURABILITY`，表示 **`在 InnoDB Prepare 时，不刷 Redo Log`**。
 
-进入组提交 (ordered_commit)
+**InnoDB Prepare**（入口函数 `innobase_xa_prepare --> trx_prepare`）：**`更新 InnoDB 的 Undo 回滚段，将其设置为 Prepare 状态（TRX_UNDO_PREPARED）`**。
 
-Flush Stage：此时形成一组队列，由leader依次为别的线程写binlog文件 在准备写binlog前，会调用ha_flush_logs接口，将存储的日志写到最新的LSN，然后再写binlog到文件。这样做的目的是为了提升组提交的效率，具体参阅之前的一篇月报。
+#### 进入组提交（`ordered_commit`）
 
-Sync Stage：如果sync_binlog计数超过配置值，则进行一次文件fsync，注意，参数sync_binlog的含义不是指的这么多个事务之后做一次fsync，而是这么多组事务队列后做一次fsync。
+1. **`Flush Stage`**：此时形成一组队列，由 leader 依次为别的线程写 binlog 文件；在准备写 binlog 前，会调用 `ha_flush_logs` 接口，将存储的日志写到最新的 LSN，然后再写 binlog 到文件。这样做的目的是为了提升组提交的效率，具体参阅之前的一篇[月报](http://mysql.taobao.org/monthly/2015/01/01/)。
 
-Semisync Stage (RDS MySQL only)：如果我们在事务commit之前等待备库ACK（设置成AFTER_SYNC模式），用户线程会释放上一个stage的锁，并等待ACk。这意味着在等待ACK的过程中，我们并不堵塞上一个stage的binlog写入，可以增加一定的吞吐量。
+2. **`Sync Stage`**：如果 `sync_binlog` 计数超过配置值，则进行一次文件 fsync，注意，参数 sync_binlog 的含义不是指的这么多个事务之后做一次 fsync，而是这么多组事务队列后做一次 fsync。
 
-Commit Stage：队列中的事务依次进行innodb commit，将undo头的状态修改为TRX_UNDO_CACHED/TRX_UNDO_TO_FREE/TRX_UNDO_TO_PURGE任意一种 (undo相关知识参阅之前的月报)；并释放事务锁，清理读写事务链表、readview等一系列操作。每个事务在commit阶段也会去更新事务页的binlog位点。
+3. **`Semisync Stage (RDS MySQL Only)`**：如果我们在事务 commit 之前等待备库 ACK（设置成 **AFTER_SYNC** 模式），用户线程会释放上一个 stage 的锁，并等待 ACK。这意味着在等待 ACK 的过程中，我们并不堵塞上一个 stage 的 binlog 写入，可以增加一定的吞吐量。
 
-TIPS：如果你关闭了binlog_order_commits选项，那么事务就各自进行提交，这种情况下不能保证innodb commit顺序和binlog写入顺序一致，这不会影响到数据一致性，在高并发场景下还能提升一定的吞吐量。但可能影响到物理备份的数据一致性，例如使用 xtrabackup（而不是基于其上的innobackup脚本）依赖于事务页上记录的binlog位点，如果位点发生乱序，就会导致备份的数据不一致。
+4. **`Commit Stage`**：队列中的事务依次进行 **`innodb commit`**，将 Undo 头的状态修改为 `TRX_UNDO_CACHED / TRX_UNDO_TO_FREE / TRX_UNDO_TO_PURGE` 中的任意一种（Undo 相关知识参阅之前的月报)；**并释放事务锁，清理读写事务链表、ReadView 等一系列操作**。每个事务在 commit 阶段也会去更新事务页的 binlog 位点。
 
-Engine/Engine XA
-当binlog关闭时，如果事务跨引擎了，就可以在事务引擎间进行XA了，典型的例如InnoDB和TokuDB（在RDS MySQL里已同时支持这两种事务引擎）。当支持超过1种事务引擎时，并且binlog关闭了，就走TC LOG MMAP逻辑。对应的XA控制对象为tc_log_mmap。
+TIPS：如果你关闭了 **`binlog_order_commits`** 选项，那么事务就各自进行提交，**`这种情况下不能保证 innodb commit 的顺序和 binlog 写入顺序一致，这不会影响到数据一致性，在高并发场景下还能提升一定的吞吐量。但可能影响到物理备份的数据一致性`**，例如使用 **`xtrabackup（而不是基于其上的 innobackup 脚本）依赖于事务页上记录的 binlog 位点，如果位点发生乱序，就会导致备份的数据不一致`**。
 
-由于需要持久化事务信息以用于重启恢复，因此在该场景下，tc_log_mmap模块会创建一个文件，名为tc.log，文件初始化大小为24KB，使用mmap的方式映射到内存中。
+### Engine/Engine XA
 
-tc.log 以PAGE来进行划分，每个PAGE大小为8K，至少需要3个PAGE，初始化的文件大小也为3个PAGE（TC_LOG_MIN_SIZE），每个Page对应的结构体对象为st_page，因此需要根据page数，完成文件对应的内存控制对象的初始化。初始化第一个page的header，写入magic number以及当前的2PC引擎数（也就是total_ha_2pc）
+当 Binlog 关闭时，如果事务跨引擎了，就可以在事务引擎间进行 XA 了，典型的例如 InnoDB 和 TokuDB（在 RDS MySQL 里已同时支持这两种事务引擎）。当支持超过 1 种事务引擎时，并且 Binlog 关闭了，就走 `TC LOG MMAP` 逻辑。对应的 XA 控制对象为 **`tc_log_mmap`**。
 
-下图描述了tc.log的文件结构：
+由于需要持久化事务信息以用于重启恢复，因此在该场景下，**`tc_log_mmap`** 模块会创建一个文件，名为 **tc.log**，文件初始化大小为 24KB，使用 mmap 的方式映射到内存中。
+
+**tc.log** 以 Page 来进行划分，每个 Page 大小为 8K，至少需要 3 个 Page，初始化的文件大小也为 3 个 Page（`TC_LOG_MIN_SIZE`），每个 Page 对应的结构体对象为 `st_page`，因此需要根据 Page 数，完成文件对应的内存控制对象的初始化。初始化第一个 Page 的 header，写入 `magic number` 以及当前的 2PC 引擎数（也就是 **`total_ha_2pc`**）
+
+下图描述了 tc.log 的文件结构：
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/tc_log_file_20151201.png)
+
 tc.log 文件结构
-tc.log 文件结构
 
-在事务执行的过程中，例如遇到第一条数据变更SQL时，会注册一个唯一标识的XID（实际上通过当前查询的query_id来唯一标识），之后直到事务提交，这个XID都不会改变。事务引擎本身在使用undo时，必须加上这个XID标识。
+**`在事务执行的过程中，例如遇到第一条数据变更 SQL 时，会注册一个唯一标识的 XID（实际上通过当前查询的 query_id 来唯一标识），之后直到事务提交，这个 XID 都不会改变。事务引擎本身在使用 Undo 时，必须加上这个 XID 标识`**。
 
-在进行事务Prepare阶段，若事务涉及到多个引擎，先在各自引擎里做事务Prepare。
+在进行事务 Prepare 阶段，若事务涉及到多个引擎，先在各自引擎里做事务 Prepare。
 
-然后进入commit阶段，这时候会将XID记录到tc.log中（如上图所示），这类涉及到相对复杂的page选择流程，这里不展开描述，具体的参阅函数TC_LOG_MMAP::commit
+然后进入 Commit 阶段，这时候会将 XID 记录到 tc.log 中（如上图所示），这里涉及到相对复杂的 Page 选择流程，本篇就不展开描述了，具体的参阅函数 `TC_LOG_MMAP::commit`；
 
-在完成记录到tc.log后，就到引擎层各自提交事务。这样即使在引擎提交时失败，我们也可以在crash recovery时，通过读取tc.log记录的xid，指导引擎层将符合XID的事务进行提交。
+在完成记录到 tc.log 后，就到引擎层各自提交事务。这样即使在引擎提交时失败，我们也可以在 crash recovery 时，通过读取 tc.log 记录的 xid，指导引擎层将符合的 XID 事务进行提交。
 
-Engine Commit
-当关闭binlog时，且事务只使用了一个事务引擎时，就无需进行XA了，相应的事务commit的流程也有所不同。
+### Engine Commit
 
-首先事务无需进入Prepare状态，因为对单引擎事务做XA没有任何意义。
+当关闭 Binlog 时，且事务只使用了一个事务引擎时，就无需进行 XA 了，相应事务的 commit 流程也有所不同。
 
-其次，因为没有Prepare状态的保护，事务在commit时需要对事务日志进行持久化。这样才能保证所有成功返回的事务变更， 能够在崩溃恢复时全部完成。
+首先事务无需进入 Prepare 状态，因为对单引擎事务做 XA 没有任何意义。
 
-显式XA
-MySQL支持显式的开启一个带命名的XA事务，例如：
+其次，因为没有 Prepare 状态的保护，事务在 Commit 时需要对事务日志进行持久化。这样才能保证所有成功返回的事务变更，能够在崩溃恢复时全部完成。
 
+### 显式 XA
+
+MySQL 支持显式的开启一个带命名的 XA 事务，例如：
+
+``` sql
 XA BEGIN "xidname"
-     do something.....
+    do something.....
 XA END 'xidname'
-XA PREPARE 'xidname'   // 当完成这一步时，如果崩溃恢复，是可以在启动后通过XA RECOVER获得事务信息，并进行显式提交
-XA COMMIT 'xidname'    // 完全提交事务
-一个有趣的问题是，在5.7之前的版本中，如果执行XA的过程中，在完成XA PREPARE后，如果kill掉session，事务就丢失了，而不是像崩溃恢复那样，可以直接恢复出来。这主要是因为MySQL对Kill session的行为处理是直接回滚事务。
 
-为了解决这个问题，MySQL5.7版本做了不小的改动，将XA的两阶段都记录到了binlog中。这样状态是持久化了的，一次干净的shutdown后，可以通过扫描binlog恢复出XA事务的状态，对于kill session导致的XA事务丢失，逻辑则比较简单：内存中使用一个transaction_cache维护了所有的XA事务，在断开连接调用THD::cleanup时不做回滚，仅设置事务标记即可。
+XA PREPARE 'xidname'
+// 当完成这一步时，如果崩溃恢复，是可以在启动后通过 XA RECOVER 获得事务信息，并进行显式提交
 
-具体的参阅我之前写的这篇月报
+XA COMMIT 'xidname'
+// 完全提交事务
+```
 
-事务回滚
-当由于各种原因（例如死锁，或者显式ROLLBACK）需要将事务回滚时，会调用handler接口ha_rollback_low，进而调用InnoDB函数trx_rollback_for_mysql来回滚事务。回滚的方式是提取undo日志，做逆向操作。
+一个有趣的问题是，在 5.7 之前的版本中，如果在执行 XA 的过程中（完成 XA PREPARE 后），Kill 掉 Session，事务就丢失了，而不是像崩溃恢复那样，可以直接恢复出来。这主要是因为 MySQL 对 Kill Session 的行为处理是直接回滚事务。
 
-由于InnoDB的undo是单独写在表空间中的，本质上和普通的数据页是一样的。如果在事务回滚时，undo页已经被从内存淘汰，回滚操作（特别是大事务变更回滚）就可能伴随大量的磁盘IO。因此InnoDB的回滚效率非常低。有的数据库管理系统，例如PostgreSQL，通过在数据页上冗余数据产生版本链的方式来实现多版本，因此回滚起来非常方便，只需要设置标记即可，但额外带来的问题就是无效数据清理开销。
+为了解决这个问题，MySQL 5.7 版本做了不小的改动，**将 XA 的两阶段都记录到了 Binlog 中。这样状态是持久化了的，一次干净的 shutdown 后，可以通过扫描 binlog 恢复出 XA 事务的状态**，对于 Kill Session 导致的 XA 事务丢失，逻辑则比较简单：内存中使用一个 `transaction_cache` 维护了所有的 XA 事务，在断开连接调用 `THD::cleanup` 时不做回滚，仅设置事务标记即可。
 
-SavePoint管理
-在事务执行的过程中，你可以通过设置SAVEPOINT的方式来管理事务的执行过程。
+具体的参阅我之前写的这篇[月报](http://mysql.taobao.org/monthly/2015/04/05/)。
 
-在介绍Savepoint之前，需要先介绍下trx_t::undo_no。在事务每次成功写入一次undo后，这个计数都会递增一次（参阅函数trx_undo_report_row_operation）。事务的undo_no也会记录到undo page中进行持久化，因此在undo链表上的undo_no总是有序递增的。
+## 事务回滚
+
+当由于各种原因（例如死锁，或者显式 ROLLBACK ）需要将事务回滚时，会调用 handler 接口 `ha_rollback_low`，进而调用 InnoDB 函数 `trx_rollback_for_mysql` 来回滚事务。回滚的方式是提取 Undo 日志，做逆向操作。
+
+**由于 InnoDB 的 Undo 是单独写在表空间中的，本质上和普通的数据页是一样的**。`如果在事务回滚时，Undo 页已经被从内存中淘汰，回滚操作（特别是大事务变更回滚）就可能伴随大量的磁盘 IO`。因此 InnoDB 的回滚效率非常低。有的数据库管理系统，例如 PostgreSQL，通过在数据页上冗余数据产生版本链的方式来实现多版本，因此回滚起来非常方便，只需要设置标记即可，但额外带来的问题就是无效数据清理开销。
+
+## SavePoint 管理
+
+在事务执行的过程中，你可以通过设置 SAVEPOINT 的方式来管理事务的执行过程。
+
+在介绍 savepoint 之前，需要先介绍下 **`trx_t::undo_no`**。**在事务每次成功写入一次 Undo后，这个计数都会递增一次**（参阅函数 `trx_undo_report_row_operation`）。**`事务的 undo_no 也会记录到 undo page 中进行持久化，因此在 Undo 链表上的 undo_no 总是有序递增的`**。
 
 总的来说，主要有以下几种操作类型。
 
-设置SAVEPOINT
+### 设置 SAVEPOINT
 
-语法：SAVEPOINT sp_name
+语法：`SAVEPOINT sp_name`
 
-入口函数：trans_savepoint
+入口函数：`trans_savepoint`
 
-在事务中设置一个SAVEPOINT，你可以随意命名一个名字，在事务中设置的所有 savepoint 实际上维护了两份链表，一份挂在THD变量上（thd->get_transaction()->m_savepoints），包含了基本的savepoint信息及到引擎层的映射，另一份在引擎层的事务对象上（维持在链表trx_t::trx_savepoints中）。
+在事务中设置一个 SAVEPOINT，你可以随意命名一个名字，在事务中设置的所有 savepoint 实际上维护了两份链表，一份挂在 **THD变量** 上（`thd->get_transaction()->m_savepoints`），包含了基本的 savepoint 信息及到引擎层的映射，另一份在引擎层的事务对象上（维持在链表 `trx_t::trx_savepoints` 中）。
 
 如下图所示：
-savepoint 链表
-savepoint 链表
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/savepoint_list_20151201.png)
+
+SAVEPOINT 链表
 
 总共分为以下几步：
 
