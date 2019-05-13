@@ -74,21 +74,24 @@ TIPS：所幸的是从 5.7 版本开始提供了可以在线 **truncate undo log
 
 ## 事务提交
 
-事务的提交分为两种方式，一种是隐式提交，一种是显式提交。
+事务的提交分为两种方式，一种是**隐式提交**，一种是**显式提交**。
 
-当你显式开启一个新的事务，或者执行一条非临时表的DDL语句时，就会隐式的将上一个事务提交掉。另外一种就是显式的执行“COMMIT” 语句来提交事务。
+当你显式开启一个新的事务，或者执行一条非临时表的 DDL 语句时，就会隐式的将上一个事务提交掉。另外一种就是显式的执行 **COMMIT** 语句来提交事务。
 
-然而，在不同的场景下，MySQL在提交时进行的动作并不相同，这主要是因为 MySQL 是一种服务器层-引擎层的架构，并存在两套日志系统：Binary log及引擎事务日志。MySQL支持两种XA事务方式：隐式XA和显式XA；当然如果关闭binlog，并且仅使用一种事务引擎，就没有XA可言了。
+然而，在不同的场景下，MySQL 在提交时进行的动作并不相同，这主要是因为 MySQL 是一种 **服务器层-引擎层** 的架构，并存在两套日志系统：`Binary Log` 及 `引擎事务日志`。MySQL 支持两种 XA 事务方式：**隐式XA** 和 **显式XA**；当然如果关闭 Binlog，并且仅使用一种事务引擎，就没有 XA 可言了。
 
-关于隐式XA的控制对象，在实例启动时决定使用何种XA模式，如下代码段：
+关于隐式XA的控制对象，在实例启动时决定使用何种 XA 模式，如下代码段：
 
-  if (total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log))
-  {
-    if (opt_bin_log)
-      tc_log= &mysql_bin_log;
-    else
-      tc_log= &tc_log_mmap;
+``` c
+if (total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log))
+    {
+        if (opt_bin_log)
+            tc_log= &mysql_bin_log;
+        else
+            tc_log= &tc_log_mmap;
   }
+```
+
 若打开binlog，且使用了事务引擎，则XA控制对象为mysql_bin_log；
 若关闭了binlog，且存在不止一种事务引擎时，则XA控制对象为tc_log_mmap；
 其他情况，使用tc_log_dummy，这种场景下就没有什么XA可言了，无需任何协调者来进行XA。
