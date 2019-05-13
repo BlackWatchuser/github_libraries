@@ -92,8 +92,9 @@ if (total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log))
   }
 ```
 
-若打开binlog，且使用了事务引擎，则XA控制对象为mysql_bin_log；
-若关闭了binlog，且存在不止一种事务引擎时，则XA控制对象为tc_log_mmap；
+* 若打开了 binlog，且使用了事务引擎，则 XA 控制对象为 **`mysql_bin_log`**；
+
+* 若关闭了 binlog，且存在不止一种事务引擎时，则 XA 控制对象为 **`tc_log_mmap`**；
 其他情况，使用tc_log_dummy，这种场景下就没有什么XA可言了，无需任何协调者来进行XA。
 这三者是TC_LOG的子类，关系如下图所示：
 
