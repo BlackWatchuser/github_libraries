@@ -89,7 +89,7 @@ err = recv_recovery_from_checkpoint_start(flushed_lsn);
 
     日志解析后的对象类型为 **`recv_t`**，包含：日志类型、长度、数据、开始和结束 LSN。**日志对象的存储使用 hash 结构，根据 space id 和 page no 计算 hash 值，相同页上的变更作为链表节点链在一起**，大概结构可以表示为：
 
-    ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/recv_hash.png)
+    ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/recv_hash_20150601.png)
 
     扫描的过程中，会基于 MLOG_FILE_NAME 和 MLOG_FILE_DELETE 这样的 Redo 日志记录来构建 `recv_spaces`，存储 space id 到文件信息的映射（`fil_name_parse –> fil_name_process`），这些文件可能需要进行崩溃恢复（实际上第一次扫描时，也会向 `recv_spaces` 中插入数据，但只到 MLOG_CHECKPOINT 日志记录为止）。
 
