@@ -323,30 +323,32 @@ mysql> Killed
 
 事务子系统维护了三个不同的链表，用来管理事务对象。
 
-trx_sys->mysql_trx_list 包含了所有用户线程的事务对象，即使是未开启的事务对象，只要还没被回收到trx_pool中，都被放在该链表上。当session断开时，事务对象从链表上摘取，并被回收到trx_pool中，以待重用。
+* **`trx_sys->mysql_trx_list 包含了所有用户线程的事务对象，即使是未开启的事务对象，只要还没被回收到 `trx_pool` 中，都被放在该链表上`**。当 session 断开时，事务对象从链表上摘取，并被回收到 `trx_pool` 中，以待重用。
 
-trx_sys->rw_trx_list 读写事务链表，当开启一个读写事务，或者事务模式转换成读写模式时，会将当前事务加入到读写事务链表中，链表上的事务是按照trx_t::id有序的；在事务提交阶段将其从读写事务链表上移除。
+* **`trx_sys->rw_trx_list 读写事务链表，当开启一个读写事务，或者事务模式转换成读写模式时，会将当前事务加入到读写事务链表中`**，链表上的事务是按照 `trx_t::id` 有序的；在事务提交阶段将其从读写事务链表上移除。
 
-trx_sys->serialisation_list 序列化事务链表，在事务提交阶段，需要先将事务的undo状态设置为完成，在这之前，获得一个全局序列号trx->no，从trx_sys->max_trx_id中分配，并将当前事务加入到该链表中。随后更新undo等一系列操作后，因此进入提交阶段的事务并不是trx->id有序的，而是根据trx->no排序。当完成undo更新等操作后，再将事务对象同时从serialisation_list和rw_trx_list上移除。
+* **`trx_sys->serialisation_list 序列化事务链表，在事务提交阶段，需要先将事务的 Undo 状态设置为完成；在这之前，获得一个全局序列号 trx->no，从 trx_sys->max_trx_id 中分配，并将当前事务加入到该链表中`**。（因此在随后更新 Undo 等一系列操作后，进入提交阶段的事务并不是 `trx->id` 有序的，而是根据 `trx->no` 排序。）当完成 Undo 更新等操作后，再将事务对象同时从 `serialisation_list` 和 `rw_trx_list` 上移除。
 
-这里需要说明下trx_t::no，这是个不太好理清的概念，从代码逻辑来看，在创建readview时，会用到序列化链表，链表的第一个元素具有最小的trx_t::no，会赋值给ReadView::m_low_limit_no。purge线程据此创建的readview，只有小于该值的undo，才可以被purge掉。
+这里需要说明下 **`trx_t::no`**，这是个不太好理清的概念，从代码逻辑来看，**`在创建 readview 时，会用到序列化链表，链表的第一个元素具有最小的 trx_t::no，会赋值给 ReadView::m_low_limit_no`**。Purge 线程据此创建的 readview，只有小于该值的 Undo，才可以被 purge 掉。
 
-总的来说，mysql_trx_list包含了rw_trx_list上的事务对象，rw_trx_list包含了serialisation_list上的事务对象。
+总的来说，`mysql_trx_list` 包含了 `rw_trx_list` 上的事务对象，`rw_trx_list` 包含了 `serialisation_list` 上的事务对象。
 
 事务ID集合有两个：
 
-trx_sys->rw_trx_ids 记录了当前活跃的读写事务ID集合，主要用于构建ReadView时快速拷贝一个快照
+**`trx_sys->rw_trx_ids 记录了当前活跃的读写事务ID集合，主要用于构建 ReadView 时快速拷贝一个快照`**。
 
-trx_sys->rw_trx_set 这是<trx_id, trx_t>的映射集合，根据trx_id排序，用于通过trx_id快速获得对应的事务对象。一个主要的用途就是用于隐式锁转换，需要为记录中的事务id所对应的事务对象创建记录锁，通过该集合可以快速获得事务对象
+**`trx_sys->rw_trx_set 这是 <trx_id, trx_t> 的映射集合，根据 trx_id 排序，用于通过 trx_id 快速获得对应的事务对象`**。一个主要的用途就是用于隐式锁转换，需要为记录中的事务id所对应的事务对象创建记录锁，通过该集合可以快速获得事务对象。
 
-事务回滚段
-对于普通的读写事务，总是为其指定一个回滚段（默认128个回滚段）。而对于只读事务，如果使用到了InnoDB临时表，则为其分配(1~32)号回滚段。（回滚段指定参阅函数trx_assign_rseg_low）
+### 事务回滚段
 
-当为事务指定了回滚段后，后续在事务需要写undo页时，就从该回滚段上分别分配两个slot，一个用于update_undo，一个用于insert_undo。分别处理的原因是事务提交后，update_undo需要purge线程来进行回收，而insert_undo则可以直接被重利用。
+对于普通的读写事务，总是为其指定一个回滚段（默认128个回滚段）。而对于只读事务，如果使用到了 InnoDB 临时表，则为其分配(1~32)号回滚段（回滚段指定参阅函数 `trx_assign_rseg_low`）。
 
-关于undo相关知识可以参阅之前的月报
+当为事务指定了回滚段后，后续在事务需要写 Undo 页时，就从该回滚段上分别分配两个 Slot，一个用于 **`update_undo`**，一个用于 **`insert_undo`**。**分别处理的原因是事务提交后，update_undo 需要 Purge 线程来进行回收，而 insert_undo 则可以直接被重利用**。
 
-事务引用计数
+关于 Undo 相关知识可以参阅之前的[月报](http://mysql.taobao.org/monthly/2015/04/01/)。
+
+### 事务引用计数
+
 在介绍事务引用计数之前，我们首先要了解下什么是隐式锁。所谓隐式锁，其实并不是一个真正的事务锁对象，可以理解为一个标记：对于聚集索引页的更新，记录本身天然带事务ID，对于二级索引页，则在page上记录最近一次更新的最大事务ID，通过回表的方式判断可见性。
 
 由于事务锁涉及到全局资源，创建锁的开销高昂，InnoDB对于新插入的记录，在没有冲突的情况下是不创建记录锁的。举个例子，Session 1插入一条记录，并保持未提交状态。另外一个session想更新这条记录，从数据页上读取到这条记录后，发现对应的事务ID还处于活跃状态，根据当前的并发规则，这个更新需要被阻塞住。因此第二个session需要为session 1创建一条记录锁，然后将自己放入等待队列中。
@@ -439,11 +441,11 @@ TrxPoolLock用于定义每个池中对象的互斥锁操作；
 由于POOL的管理结构支持多个POOL对象，TrxPoolManagerLock用于互斥操作增加POOL对象。支持多个POOL对象的目的是分拆单个POOL对象的锁开销，避免引入热点。因为从POOL中获取和返还对象，都是需要排他锁的。
 相关类的关系如下图所示：
 
-事务池相关类
-事务池相关类
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/innodb_trx_pool_class_20151201.png "事务池相关类")
 
-InnoDB MVCC实现
-InnoDB有两个非常重要的模块来实现MVCC，一个是undo日志，用于记录数据的变化轨迹，另外一个是Readview，用于判断该session对哪些数据可见，哪些不可见。实际上我们已经在之前的月报中介绍过这部分内容，这里再简要介绍下。
+## InnoDB MVCC 实现
+
+InnoDB 有两个非常重要的模块来实现MVCC，一个是undo日志，用于记录数据的变化轨迹，另外一个是Readview，用于判断该session对哪些数据可见，哪些不可见。实际上我们已经在之前的月报中介绍过这部分内容，这里再简要介绍下。
 
 事务视图ReadView
 前面已经多次提到过ReadView，也就是事务视图，它用于控制数据的可见性。在InnoDB中，只有查询才需要通过Readview来控制可见性，对于DML等数据变更操作，如果操作了不可见的数据，则直接进入锁等待。
