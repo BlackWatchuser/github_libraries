@@ -100,9 +100,7 @@ if (total_ha_2pc > 1 || (1 == total_ha_2pc && opt_bin_log))
 
 这三者是TC_LOG的子类，关系如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/TC_LOG_20151201.png)
-
-TC LOG
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/TC_LOG_20151201.png "TC LOG")
 
 具体的，包含以下几种类型的 XA（不对数据产生变更的只读事务无需走 XA）
 
@@ -136,9 +134,7 @@ TIPS：如果你关闭了 **`binlog_order_commits`** 选项，那么事务就各
 
 下图描述了 tc.log 的文件结构：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/tc_log_file_20151201.png)
-
-tc.log 文件结构
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/tc_log_file_20151201.png "tc.log 文件结构")
 
 **`在事务执行的过程中，例如遇到第一条数据变更 SQL 时，会注册一个唯一标识的 XID（实际上通过当前查询的 query_id 来唯一标识），之后直到事务提交，这个 XID 都不会改变。事务引擎本身在使用 Undo 时，必须加上这个 XID 标识`**。
 
@@ -202,9 +198,7 @@ XA COMMIT 'xidname'
 
 如下图所示：
 
-![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/savepoint_list_20151201.png)
-
-SAVEPOINT 链表
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/savepoint_list_20151201.png "SAVEPOINT 链表")
 
 总共分为以下几步：
 
@@ -293,34 +287,40 @@ mysql> Killed
 
 在事务执行的过程中，需要多个模块来辅助事务的正常执行：
 
-Server层的MDL锁模块，维持了一个事务过程中所有涉及到的表级锁对象。通过MDL锁，可以堵塞DDL，避免DDL和DML记录binlog乱序；
-InnoDB的trx_sys子系统，维持了所有的事务状态，包括活跃事务、非活跃事务对象、读写事务链表、负责分配事务id、回滚段、Readview等信息，是事务系统的总控模块；
-InnoDB的lock_sys子系统，维护事务锁信息，用于对修改数据操作做并发控制，保证了在一个事务中被修改的记录，不可以被另外一个事务修改；
-InnoDB的log_sys子系统，负责事务redo日志管理模块；
-InnoDB的purge_sys子系统，则主要用于在事务提交后，进行垃圾回收，以及数据页的无效数据清理。
+* **`Server 层的 MDL 锁模块，维持了一个事务过程中所有涉及到的表级锁对象。通过 MDL 锁，可以堵塞 DDL，避免 DDL 和 DML 记录 binlog 乱序`**；
+
+* **`InnoDB 的 trx_sys 子系统，维持了所有的事务状态，包括活跃事务、非活跃事务对象、读写事务链表、负责分配事务id、回滚段、ReadView 等信息，是事务系统的总控模块`**；
+
+* **`InnoDB 的 lock_sys 子系统，维护事务锁信息，用于对修改数据操作做并发控制，保证了在一个事务中被修改的记录，不可以被另外一个事务修改`**；
+
+* **`InnoDB 的 log_sys 子系统，负责事务 Redo 日志管理模块`**；
+
+* **`InnoDB的 purge_sys 子系统，则主要用于在事务提交后，进行垃圾回收，以及数据页的无效数据清理`**。
+
 总的来说，事务管理模块的架构图，如下图所示：
 
-InnoDB 事务管理
-InnoDB 事务管理
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/innodb_trx_management_20151201.png "InnoDB 事务管理")
 
 下面就几个事务模块的关键点展开描述。
 
-事务ID
-在InnoDB中一直维持了一个不断递增的整数，存储在trx_sys->max_trx_id中；每次开启一个新的读写事务时，都将该ID分配给事务，同时递增全局计数。事务ID可以看做一个事务的唯一标识。
+### 事务ID
 
-在MySQL5.6及之前的版本中，总是为事务分配ID。但实际上这是没有必要的，毕竟只有做过数据更改的读写事务，我们才需要去根据事务ID判断可见性。因此在MySQL5.7版本中，只有读写事务才会分配事务ID，只读事务的ID默认为0。
+**`在 InnoDB 中一直维持了一个不断递增的整数，存储在 trx_sys->max_trx_id 中；每次开启一个新的读写事务时，都将该 ID 分配给事务，同时递增全局计数。事务ID 可以看做一个事务的唯一标识`**。
 
-那么问题来了，怎么去区分不同的只读事务呢？这里在需要输出事务ID时（例如执行SHOW ENGINE INNODB STATUS 或者查询INFORMATION_SCHEMA.INNODB_TRX表），使用只读事务对象的指针或上一个常量来标识其唯一性，具体的计算方式见函数trx_get_id_for_print。所以如果你show出来的事务ID看起来数字特别庞大，千万不要惊讶。
+在 MySQL 5.6 及之前的版本中，总是为事务分配 ID。但实际上这是没有必要的，毕竟只有做过数据更改的读写事务，我们才需要去根据事务ID判断可见性。因此 **`在 MySQL 5.7 版本中，只有读写事务才会分配事务ID，只读事务的 ID 默认为 0`**。
 
-对于全局最大事务ID，每做256次赋值(TRX_SYS_TRX_ID_WRITE_MARGIN)就持久化一次到ibdata的事务页(TRX_SYS_PAGE_NO)中。
+那么问题来了，怎么去区分不同的只读事务呢？这里在需要输出事务ID时（例如:执行 `SHOW ENGINE INNODB STATUS` 或者查询 `INFORMATION_SCHEMA.INNODB_TRX` 表），使用只读事务对象的指针或上一个常量来标识其唯一性，具体的计算方式见函数 `trx_get_id_for_print`。所以如果你 show 出来的事务ID看起来数字特别庞大，千万不要惊讶。
 
-已分配的事务ID会加入到全局读写事务ID集合中（trx_sys->rw_trx_ids），事务ID和事务对象的map加入到trx_sys->rw_trx_set中，这是个有序的集合(std::set)，可以用于通过trx id快速定位到对应的事务对象。
+**对于全局最大事务ID，每做 256 次赋值（`TRX_SYS_TRX_ID_WRITE_MARGIN`）就持久化一次到 ibdata 的事务页（`TRX_SYS_PAGE_NO`）中**。
 
-事务分配得到的ID并不是立刻就被使用了，而是在做了数据修改时，需要创建或重用一个undo slot时，会将当前事务的ID写入到undo page头，状态为TRX_UNDO_ACTIVE。这也是崩溃恢复时，InnoDB判断是否有未完成事务的重要依据。
+已分配的事务ID会加入到**全局读写事务ID集合**中（`trx_sys->rw_trx_ids`），事务ID和事务对象的map加入到 `trx_sys->rw_trx_set` 中，这是个有序的集合（`std::set`），**可以用于通过 trx_id 快速定位到对应的事务对象**。
 
-在执行数据更改的过程中，如果我们更新的是聚集索引记录，事务ID + 回滚段指针会被写到聚集索引记录中，其他会话可以据此来判断可见性以及是否要回溯undo链。 对于普通的二级索引页更新，则采用回溯聚集索引页的方式来判断可见性（如果需要的话）。关于MVCC，后文会有单独描述。
+**`事务分配得到的 ID 并不是立刻就被使用了，而是在做了数据修改，需要创建或重用一个 Undo Slot 时，会将当前事务的 ID 写入到 Undo Page 头，状态为 TRX_UNDO_ACTIVE。这也是崩溃恢复时，InnoDB 判断是否有未完成事务的重要依据`**。
 
-事务链表和集合
+在执行数据更改的过程中，如果我们更新的是**聚集索引**记录，**`事务ID + 回滚段指针`** 会被写到聚集索引记录中，其他会话可以据此来判断可见性以及是否要回溯 Undo 链。对于普通的**二级索引**页更新，则 **`采用回溯聚集索引页的方式来判断可见性（如果需要的话）`**。关于 MVCC，后文会有单独描述。
+
+### 事务链表和集合
+
 事务子系统维护了三个不同的链表，用来管理事务对象。
 
 trx_sys->mysql_trx_list 包含了所有用户线程的事务对象，即使是未开启的事务对象，只要还没被回收到trx_pool中，都被放在该链表上。当session断开时，事务对象从链表上摘取，并被回收到trx_pool中，以待重用。
