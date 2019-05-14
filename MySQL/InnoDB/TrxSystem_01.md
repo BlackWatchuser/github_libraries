@@ -530,26 +530,31 @@ typedef PoolManager<trx_pool_t, TrxPoolManagerLock > trx_pools_t;
 
 如果我们查询得到的是一条**二级索引**记录：
 
-首先将page头的trx_id和当前视图相比较：如果小于ReadView::m_up_limit_id，当前事务肯定可见；否则就需要去找到对应的聚集索引记录（lock_sec_rec_cons_read_sees）；
-如果需要进一步判断，先根据ICP条件，检查是否该记录满足push down的条件，以减少回聚集索引的次数；
-满足ICP条件，则需要查询聚集索引记录（row_sel_get_clust_rec_for_mysql），之后的判断就和上述聚集索引记录的判断一致了。
-在InnoDB中，只有读查询才会去构建ReadView视图，对于类似DML这样的数据更改，无需判断可见性，而是单纯的发现事务锁冲突，直接堵塞操作。
+* **`首先将 Page 头的 trx_id 和当前视图相比较：如果小于 ReadView::m_up_limit_id，当前事务肯定可见；否则就需要去找到对应的聚集索引记录（lock_sec_rec_cons_read_sees）`**；
+
+* 如果需要进一步判断，先根据 **ICP** 条件，检查是否该记录满足 **Pushdown** 的条件，以减少回聚集索引的次数；
+
+* 满足 **ICP** 条件，则需要查询聚集索引记录（`row_sel_get_clust_rec_for_mysql`），之后的判断就和上述聚集索引记录的判断一致了。
+
+**`在 InnoDB 中，只有读查询才会去构建 ReadView 视图，对于类似 DML 这样的数据更改，无需判断可见性，而是单纯的发现事务锁冲突，直接堵塞操作`**。
 
 ### 隔离级别
 
 然而在不同的隔离级别下，可见性的判断有很大的不同。
 
-READ-UNCOMMITTED 在该隔离级别下会读到未提交事务所产生的数据更改，这意味着可以读到脏数据，实际上你可以从函数row_search_mvcc中发现，当从btree读到一条记录后，如果隔离级别设置成READ-UNCOMMITTED，根本不会去检查可见性或是查看老版本。这意味着，即使在同一条SQL中，也可能读到不一致的数据。
+1. **`READ-UNCOMMITTED 在该隔离级别下会读到未提交事务所产生的数据更改`**，这意味着可以读到脏数据，实际上你可以从函数 `row_search_mvcc` 中发现，当从 btree 读到一条记录后，如果隔离级别设置成 READ-UNCOMMITTED，根本不会去检查可见性或是查看老版本。这意味着，**`即使在同一条 SQL 中，也可能读到不一致的数据`**。
 
-READ-COMMITTED 在该隔离级别下，可以在SQL级别做到一致性读，当事务中的SQL执行完成时，ReadView被立刻释放了，在执行下一条SQL时再重建ReadView。这意味着如果两次查询之间有别的事务提交了，是可以读到不一致的数据的。
+2. **`READ-COMMITTED 在该隔离级别下，可以在 SQL 级别做到一致性读，当事务中的 SQL 执行完成时，ReadView 被立刻释放了，在执行下一条 SQL 时再重建 ReadView`**。这意味着如果两次查询之间有别的事务提交了，是可以读到不一致的数据的。
 
-REPEATABLE-READ 可重复读和READ-COMMITTED的不同之处在于，当第一次创建ReadView后（例如事务内执行的第一条SEELCT语句），这个视图就会一直维持到事务结束。也就是说，在事务执行期间的可见性判断不会发生变化，从而实现了事务内的可重复读。
+3. **`REPEATABLE-READ 可重复读和 READ-COMMITTED 的不同之处在于，当第一次创建 ReadView 后（例如事务内执行的第一条 SELECT 语句），这个视图就会一直维持到事务结束`**。也就是说，在事务执行期间的可见性判断不会发生变化，从而实现了事务内的可重复读。
 
-SERIALIZABLE 序列化的隔离是最高等级的隔离级别，当一个事务在对某个表做记录变更操作时，另外一个查询操作就会被该操作堵塞住。同样的，如果某个只读事务开启并查询了某些记录，那么另外一个session对这些记录的更改操作是被堵塞的。内部的实现其实很简单：
+4. **`SERIALIZABLE`** 序列化的隔离是最高等级的隔离级别，当一个事务在对某个表做记录变更操作时，另外一个查询操作就会被该操作堵塞住。同样的，如果某个只读事务开启并查询了某些记录，那么另外一个 session 对这些记录的更改操作是被堵塞的。内部的实现其实很简单：
 
-对InnoDB表级别加LOCK_IS锁，防止表结构变更操作
-对查询得到的记录加LOCK_S共享锁，这意味着在该隔离级别下，读操作不会互相阻塞。而数据变更操作通常会对记录加LOCK_X锁，和LOCK_S锁相冲突，InnoDB通过给查询加记录锁的方式来保证了序列化的隔离级别。
-注意不同的隔离级别下，数据具有不同的隔离性，甚至事务锁的加锁策略也不尽相同，你需要根据自己实际的业务情况来进行选择。
+    * **`对 InnoDB 表级别加 LOCK_IS 锁，防止表结构变更操作`**；
+
+    * **`对查询得到的记录加 LOCK_S 共享锁`**，这意味着在该隔离级别下，读操作不会互相阻塞。而数据变更操作通常会对记录加 LOCK_X 锁，和 LOCK_S 锁相冲突，InnoDB 通过给查询加记录锁的方式来保证了序列化的隔离级别。
+
+注意：不同的隔离级别下，数据具有不同的隔离性，甚至事务锁的加锁策略也不尽相同，你需要根据自己实际的业务情况来进行选择。
 
 ### 一个有趣的可见性问题
 
@@ -557,6 +562,7 @@ SERIALIZABLE 序列化的隔离是最高等级的隔离级别，当一个事务�
 
 ``` sql
 Session 1：
+
 mysql> CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, key(c2));
 Query OK, 0 rows affected (0.00 sec)
 
@@ -567,34 +573,41 @@ mysql> INSERT INTO t1 VALUES (1,2,3);
 Query OK, 1 row affected (0.00 sec)
 
 Session 2:
+
 mysql> BEGIN;
 Query OK, 0 rows affected (0.00 sec)
 
-mysql> UPDATE t1 SET c3=c3+1 WHERE c3 = 3;    // 扫描聚集索引进行查询，记录不可见，但未被记录锁堵塞
+// 扫描聚集索引进行查询，记录不可见，但未被记录锁堵塞
+mysql> UPDATE t1 SET c3=c3+1 WHERE c3 = 3;    
 Query OK, 0 rows affected (0.00 sec)
 Rows matched: 0  Changed: 0  Warnings: 0
 
-mysql> UPDATE t1 SET c3=c3+1 WHERE c2 = 2;   // 根据二级索引进行查询，记录不可见，且被记录锁堵塞
+// 根据二级索引进行查询，记录不可见，且被记录锁堵塞
+mysql> UPDATE t1 SET c3=c3+1 WHERE c2 = 2;   
 ```
 
-查询条件不同，但指向的确是同一条已插入未提交的记录，为什么会有两种不同的表现呢？ 这主要是不同索引在数据检索时的策略不同造成的。
+查询条件不同，但指向的确是同一条已插入未提交的记录，为什么会有两种不同的表现呢？这主要是不同索引在数据检索时的策略不同造成的。
 
-实际上session2的第一条update也为session1做了隐式锁转换，但是在返回到row_search_mvcc时，会走到如下判断：
+实际上 Session 2 的第一条 Update 也为 Session 1 做了**隐式锁转换**，但是在返回到 `row_search_mvcc` 时，会走到如下判断：
 
+```  c
 Line 5312~5318,  row0sel.cc:
-                        if (UNIV_LIKELY(prebuilt->row_read_type
-                                        != ROW_READ_TRY_SEMI_CONSISTENT)
-                            || unique_search
-                            || index != clust_index) {
 
-                                goto lock_wait_or_error;
-                        }
-对于第一条和第二条update，prebuilt->row_read_type值均为ROW_READ_TRY_SEMI_CONSISTENT，不满足第一个条件；
-均不满足unique_search(通过pk，或uk作为where条件进行查询)；
-第一个使用的聚集索引，三个条件都不满足；而第二个update使用的二级索引，因此走lock_wait_or_error的逻辑，进入锁等待。
-第一条update继续往下走，根据undo去构建老版本记录（row_sel_build_committed_vers_for_mysql ），一条新插入的记录老版本就是空了，所以认为这条更新没有查询到目标记录，从而忽略了锁阻塞的逻辑。
+if (UNIV_LIKELY(prebuilt->row_read_type != ROW_READ_TRY_SEMI_CONSISTENT) 
+    || unique_search || index != clust_index) {
+    goto lock_wait_or_error;
+}
+```
 
-如果使用pk或者二级索引作为where条件查询的话，都会走到锁等待条件。
+* 对于第一条和第二条 Update，`prebuilt->row_read_type` 值均为 `ROW_READ_TRY_SEMI_CONSISTENT`，不满足第一个条件；
+
+* 均不满足 `unique_search`（通过 PK，或 UK 作为 where 条件进行查询)；
+
+* 第一个使用的聚集索引，三个条件都不满足；而第二个 Update 使用的二级索引，因此走 `lock_wait_or_error` 的逻辑，进入锁等待。
+
+第一条 Update 继续往下走，根据 Undo 去构建老版本记录（`row_sel_build_committed_vers_for_mysql`），一条新插入的记录老版本就是空了，所以认为这条更新没有查询到目标记录，从而忽略了锁阻塞的逻辑。
+
+**`如果使用 PK 或者二级索引作为 where 条件查询的话，都会走到锁等待条件`**。
 
 推而广之，如果表上没有索引的话，那么对于任意插入的记录，更新操作都见不到插入的记录（但是会为插入操作创建记录锁）。
 
@@ -630,3 +643,4 @@ Line 5312~5318,  row0sel.cc:
 
 InnoDB 通过这种机制保证了数据和日志的准确性的。你可以将实例配置成事务提交时将 redo 日志 fsync 到磁盘（`innodb_flush_log_at_trx_commit = 1`），数据文件的 FLUSH 策略（`innodb_flush_method`）修改为 `0_DIRECT`，以此来保证强持久化。你也可以选择更弱化的配置来保证实例的性能。
 
+------
