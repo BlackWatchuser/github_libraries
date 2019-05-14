@@ -441,78 +441,102 @@ MySQL 5.7 实现了一种高优先级的事务调度方式。当事务处于高�
 
 ### 事务对象池
 
-为了减少构建事务对象时的内存操作开销，尤其是短连接场景下的性能，InnoDB引入了一个池结构，可以很方便的分配和释放事务对象。实际上事务的事务锁对象也引用了池结构。
+**`为了减少构建事务对象时的内存操作开销，尤其是短连接场景下的性能，InnoDB 引入了一个池结构，可以很方便的分配和释放事务对象；实际上事务的事务锁对象也引用了池结构`**。
 
-事务池对应的全局变量为trx_pools，初始化为：
+事务池对应的全局变量为 `trx_pools`，初始化为：
 
-     trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE));
-trx_pools是操作trx pool的接口，类型为trx_pools_t，其定义如下：
+``` c
+trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE));
+```
 
-     typedef Pool<trx_t, TrxFactory, TrxPoolLock> trx_pool_t;
-     typedef PoolManager<trx_pool_t, TrxPoolManagerLock > trx_pools_t;
-其中，trx_t表示事务对象类型，TrxFactory封装了事务的初始化，TrxPoolLock封装了POOL锁的创建、销毁、加锁、解锁，PoolManager封装了池的管理方法。
+`trx_pools` 是操作 **trx pool** 的接口，类型为 `trx_pools_t`，其定义如下：
+
+``` c
+typedef Pool<trx_t, TrxFactory, TrxPoolLock> trx_pool_t;
+typedef PoolManager<trx_pool_t, TrxPoolManagerLock > trx_pools_t;
+```
+
+其中，`trx_t` 表示事务对象类型，`TrxFactory` 封装了事务的初始化，`TrxPoolLock` 封装了 POOL 锁的创建、销毁、加锁、解锁，`PoolManager` 封装了池的管理方法。
 
 这里涉及到多个类：
 
-Pool 及 PoolManager 是公共用的类；
-TrxFactory 和 TrxPoolLock, TrxPoolManagerLock是trx pool私有的类；
-TrxFactory用于定义池中事务对象的初始化和销毁动作；
-TrxPoolLock用于定义每个池中对象的互斥锁操作；
-由于POOL的管理结构支持多个POOL对象，TrxPoolManagerLock用于互斥操作增加POOL对象。支持多个POOL对象的目的是分拆单个POOL对象的锁开销，避免引入热点。因为从POOL中获取和返还对象，都是需要排他锁的。
+* `Pool` 及 `PoolManager` 是公共用的类；
+
+* `TrxFactory` 和 `TrxPoolLock`, `TrxPoolManagerLock` 是 `trx pool` 私有的类；
+
+* `TrxFactory` 用于定义池中事务对象的初始化和销毁动作；
+
+* `TrxPoolLock` 用于定义每个池中对象的互斥锁操作；
+
+* 由于 POOL 的管理结构支持多个 POOL 对象，`TrxPoolManagerLock` 用于互斥操作增加 POOL 对象。**`支持多个 POOL 对象的目的是分拆单个 POOL 对象的锁开销，避免引入热点。因为从 POOL 中获取和返还对象，都是需要排他锁的`**。
+
 相关类的关系如下图所示：
 
 ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/innodb_trx_pool_class_20151201.png "事务池相关类")
 
 ## InnoDB MVCC 实现
 
-InnoDB 有两个非常重要的模块来实现MVCC，一个是undo日志，用于记录数据的变化轨迹，另外一个是Readview，用于判断该session对哪些数据可见，哪些不可见。实际上我们已经在之前的月报中介绍过这部分内容，这里再简要介绍下。
+**`InnoDB 有两个非常重要的模块来实现 MVCC，一个是 Undo 日志，用于记录数据的变化轨迹，另外一个是 ReadView，用于判断该 Session 对哪些数据可见，哪些不可见`**。实际上我们已经在之前的月报中介绍过这部分内容，这里再简要介绍下。
 
-事务视图ReadView
-前面已经多次提到过ReadView，也就是事务视图，它用于控制数据的可见性。在InnoDB中，只有查询才需要通过Readview来控制可见性，对于DML等数据变更操作，如果操作了不可见的数据，则直接进入锁等待。
+#### 事务视图 ReadView
 
-ReadView包含几个重要的变量：
+前面已经多次提到过 ReadView，也就是事务视图，它**用于控制数据的可见性**。**`在 InnoDB 中，只有查询才需要通过 Readview 来控制可见性，对于DML等数据变更操作，如果操作了不可见的数据，则直接进入锁等待`**。
 
-ReadView::id 创建该视图的事务ID；
-ReadView::m_ids 创建ReadView时，活跃的读写事务ID数组，有序存储；
-ReadView::m_low_limit_id 设置为当前最大事务ID；
-ReadView::m_up_limit_id m_ids集合中的最小值，如果m_ids集合为空，表示当前没有活跃读写事务，则设置为当前最大事务ID。
-很显然ReadView的创建需要在trx_sys->mutex的保护下进行，相当于拿到了当时的一个全局事务快照。基于上述变量，我们就可以判断数据页上的记录是否对当前事务可见了。
+**ReadView** 包含几个重要的变量：
 
-为了管理ReadView，MVCC子系统使用多个链表进行分配、维护、回收ReadView：
+* **`ReadView::idx 创建该视图的事务ID`**；
 
-MVCC::m_free 用于维护空闲的ReadView对象，初始化时创建1024个ReadView对象（trx_sys_create），当释放一个活跃的视图时，会将其加到该链表上，以便下次重用；
-MVCC::m_views 这里存储了两类视图，一类是当前活跃的视图，另一类是上次被关闭的只读事务视图。后者主要是为了减少视图分配开销。因为当系统的读占大多数时，如果在两次查询中间没有进行过任何读写操作，那我们就可以重用这个ReadView，而无需去持有trx_sys->mutex锁重新分配；
-目前自动提交的只读事务或者RR级别下的只读都支持read view缓存，但目前版本还存在的问题是，在RC级别下不支持视图缓存，见bug#79005。
+* **`ReadView::m_ids 创建 ReadView 时，活跃的读写事务ID数组，有序存储`**；
 
-另外purge系统在开始purge任务时，需去克隆MVCC::m_views链表上未被close的最老视图，并在本地视图中将该最老事务的事务ID也加入到不可见的事务DI集合ReadView::m_ids中(MVCC::clone_oldest_view)。
+* **`ReadView::m_low_limit_id 设置为当前最大事务ID`**；
 
-回滚段指针
-回滚段undo是实现InnoDB MVCC的根基。每次修改聚集索引页上的记录时，变更之前的记录都会写到undo日志中。回滚段指针包括undo log所在的回滚段ID、日志所在的page no、以及page内的偏移量，可以据此找到最近一次修改之前的undo记录，而每条Undo记录又能再次找到之前的变更。
+* **`ReadView::m_up_limit_id m_ids 集合中的最小值，如果 m_ids 集合为空，表示当前没有活跃读写事务，则设置为当前最大事务ID`**。
 
-当有可能undo被访问到时，purge_sys将不会去清理undo log，如上所述，purge_sys只会去清理最老ReadView不会看到的事务。这意味着，如果你运行了一个长时间的查询SQL，或者以大于RC的隔离级别开启了一个事务视图但没有提交事务，purge系统将一直无法前行，即使你的会话并不活跃。这时候undo日志将无法被及时回收，最直观的后果就是undo空间急剧膨胀。
+很显然 **`ReadView` 的创建需要在 `trx_sys->mutex` 的保护下进行，相当于拿到了当时的一个全局事务快照**。基于上述变量，我们就可以判断数据页上的记录是否对当前事务可见了。
 
-关于undo这里不赘述，详细参阅之前月报
+为了管理 ReadView，MVCC 子系统使用多个链表进行分配、维护、回收 ReadView：
 
-可见性判断
-如上所述，聚集索引的可见性判断和二级索引的可见性判断略有不同。因为二级索引记录并没有存储事务ID信息，相应的，只是在数据页头存储了最近更新该page的trx_id。
+* **`MVCC::m_free 用于维护空闲的 ReadView 对象，初始化时创建 1024 个 ReadView 对象（trx_sys_create），当释放一个活跃的视图时，会将其加到该链表上，以便下次重用`**；
 
-对于聚集索引记录，当我们从btree获得一条记录后，先判断（lock_clust_rec_cons_read_sees）当前的readview是否满足该记录的可见性：
+* **`MVCC::m_views 这里存储了两类视图，一类是当前活跃的视图，另一类是上次被关闭的只读事务视图`**。后者主要是为了减少视图分配开销。因为当系统的读占大多数时，如果在两次查询中间没有进行过任何读写操作，那我们就可以重用这个 ReadView，而无需去持有 `trx_sys->mutex` 锁重新分配；
 
-如果记录的trx_id小于ReadView::m_up_limit_id，则说明该事务在创建ReadView时已经提交了，肯定可见；
-如果记录的trx_id大于等于ReadView::m_low_limit_id，则说明该事务是创建readview之后开启的，肯定不可见；
-当trx_id在m_up_limit_id和m_low_limit_id之间时，如果在ReadView::m_ids数组中，说明创建readview时该事务是活跃的，其做的变更对当前视图不可见，否则对该trx_id的变更可见。
-如果基于上述判断，该数据变更不可见时，就尝试通过undo去构建老版本记录（row_sel_build_prev_vers_for_mysql -->row_vers_build_for_consistent_read），直到找到可见的记录，或者到达undo链表头都未找到。
+目前 **自动提交的只读事务** 或者 **RR 级别下的只读事务** 都支持 read view 缓存，但目前版本还存在的问题是，在 RC 级别下不支持视图缓存，见 [bug#79005](https://bugs.mysql.com/bug.php?id=79005)。
 
-注意当隔离级别设置为READ UNCOMMITTED时，不会去构建老版本。
+另外 **`Purge 系统在开始 purge 任务时，需去克隆 MVCC::m_views 链表上未被 close 的最老视图，并在本地视图中将该最老事务的事务ID也加入到不可见的事务ID集合 ReadView::m_ids 中（MVCC::clone_oldest_view）`**。
 
-如果我们查询得到的是一条二级索引记录：
+### 回滚段指针
+
+回滚段 Undo 是实现 InnoDB MVCC 的根基。**`每次修改聚集索引页上的记录时，变更之前的记录都会写到 Undo 日志中。回滚段指针包括 undo log 所在的回滚段ID、日志所在的 page no、以及 page 内的偏移量，可以据此找到最近一次修改之前的 Undo 记录，而每条 Undo 记录又能再次找到之前的变更`**。
+
+当有可能 Undo 被访问到时，purge_sys 将不会去清理 undo log；如上所述，**`purge_sys 只会去清理最老 ReadView 不会看到的事务`**。这意味着，如果你运行了一个长时间的查询 SQL，或者以大于 RC 的隔离级别开启了一个事务视图但没有提交事务，Purge 系统将一直无法前行，即使你的会话并不活跃。这时候 Undo 日志将无法被及时回收，最直观的后果就是 Undo 空间急剧膨胀。
+
+关于 Undo 这里不赘述，详细参阅之前[月报](http://mysql.taobao.org/monthly/2015/04/01/)。
+
+###  可见性判断
+
+如上所述，**`聚集索引的可见性判断和二级索引的可见性判断略有不同。因为二级索引记录并没有存储事务ID信息，相应的，只是在数据页头存储了最近更新该 Page 的 trx_id`**。
+
+对于**聚集索引**记录，当我们从 btree 获得一条记录后，先判断（`lock_clust_rec_cons_read_sees`）当前的 ReadView 是否满足该记录的可见性：
+
+* **`如果记录的 trx_id 小于 ReadView::m_up_limit_id，则说明该事务在创建ReadView时已经提交了，肯定可见`**；
+
+* **`如果记录的 trx_id 大于等于 ReadView::m_low_limit_id，则说明该事务是创建 ReadView 之后开启的，肯定不可见`**；
+
+* **`当 trx_id 在 m_up_limit_id 和 m_low_limit_id 之间时，如果在 ReadView::m_ids 数组中，说明创建 ReadView 时该事务是活跃的，其做的变更对当前视图不可见；否则（trx_id 为创建该视图的事务ID）变更可见`**。
+
+如果基于上述判断，该数据变更不可见时，就尝试通过 Undo 去构建老版本记录（`row_sel_build_prev_vers_for_mysql -->row_vers_build_for_consistent_read`），直到找到可见的记录，或者到达 Undo 链表头都未找到。
+
+**注意**：当隔离级别设置为 READ UNCOMMITTED 时，不会去构建老版本。
+
+如果我们查询得到的是一条**二级索引**记录：
 
 首先将page头的trx_id和当前视图相比较：如果小于ReadView::m_up_limit_id，当前事务肯定可见；否则就需要去找到对应的聚集索引记录（lock_sec_rec_cons_read_sees）；
 如果需要进一步判断，先根据ICP条件，检查是否该记录满足push down的条件，以减少回聚集索引的次数；
 满足ICP条件，则需要查询聚集索引记录（row_sel_get_clust_rec_for_mysql），之后的判断就和上述聚集索引记录的判断一致了。
 在InnoDB中，只有读查询才会去构建ReadView视图，对于类似DML这样的数据更改，无需判断可见性，而是单纯的发现事务锁冲突，直接堵塞操作。
 
-隔离级别
+### 隔离级别
+
 然而在不同的隔离级别下，可见性的判断有很大的不同。
 
 READ-UNCOMMITTED 在该隔离级别下会读到未提交事务所产生的数据更改，这意味着可以读到脏数据，实际上你可以从函数row_search_mvcc中发现，当从btree读到一条记录后，如果隔离级别设置成READ-UNCOMMITTED，根本不会去检查可见性或是查看老版本。这意味着，即使在同一条SQL中，也可能读到不一致的数据。
@@ -527,9 +551,11 @@ SERIALIZABLE 序列化的隔离是最高等级的隔离级别，当一个事务�
 对查询得到的记录加LOCK_S共享锁，这意味着在该隔离级别下，读操作不会互相阻塞。而数据变更操作通常会对记录加LOCK_X锁，和LOCK_S锁相冲突，InnoDB通过给查询加记录锁的方式来保证了序列化的隔离级别。
 注意不同的隔离级别下，数据具有不同的隔离性，甚至事务锁的加锁策略也不尽相同，你需要根据自己实际的业务情况来进行选择。
 
-一个有趣的可见性问题
-在READ-COMMITTED隔离级别下，我们考虑如下执行序列：
+### 一个有趣的可见性问题
 
+在 **READ-COMMITTED** 隔离级别下，我们考虑如下执行序列：
+
+``` sql
 Session 1：
 mysql> CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, key(c2));
 Query OK, 0 rows affected (0.00 sec)
@@ -549,6 +575,8 @@ Query OK, 0 rows affected (0.00 sec)
 Rows matched: 0  Changed: 0  Warnings: 0
 
 mysql> UPDATE t1 SET c3=c3+1 WHERE c2 = 2;   // 根据二级索引进行查询，记录不可见，且被记录锁堵塞
+```
+
 查询条件不同，但指向的确是同一条已插入未提交的记录，为什么会有两种不同的表现呢？ 这主要是不同索引在数据检索时的策略不同造成的。
 
 实际上session2的第一条update也为session1做了隐式锁转换，但是在返回到row_search_mvcc时，会走到如下判断：
@@ -570,29 +598,35 @@ Line 5312~5318,  row0sel.cc:
 
 推而广之，如果表上没有索引的话，那么对于任意插入的记录，更新操作都见不到插入的记录（但是会为插入操作创建记录锁）。
 
-InnoDB ACID
-本小节针对ACID这四种数据库特性分别进行简单描述。
+## InnoDB ACID
 
-Atomicity （原子性）
+本小节针对 ACID 这四种数据库的事务特性分别进行简单描述。
+
+### Atomicity（原子性）
+
 所谓原子性，就是一个事务要么全部完成变更，要么全部失败。如果在执行过程中失败，回滚操作需要保证“好像”数据库从没执行过这个事务一样。
 
-从用户的角度来看，用户发起一个COMMIT语句，要保证事务肯定成功完成了；若发起ROLLBACK语句，则干净的回滚掉事务所有的变更。 从内部实现的角度看，InnoDB对事务过程中的数据变更总是维持了undo log，若用户想要回滚事务，能够通过Undo追溯最老版本的方式，将数据全部回滚回来。若用户需要提交事务，则将提交日志刷到磁盘。
+从用户的角度来看，用户发起一个 COMMIT 语句，要保证事务肯定成功完成了；若发起 ROLLBACK 语句，则干净的回滚掉事务所有的变更。从内部实现的角度看，InnoDB 对事务过程中的数据变更总是维持了 undo log，若用户想要回滚事务，能够通过 Undo 追溯最老版本的方式，将数据全部回滚回来。若用户需要提交事务，则将提交日志刷到磁盘。
 
-Consistency （一致性）
-一致性指的是数据库需要总是保持一致的状态，即使实例崩溃了，也要能保证数据的一致性，包括内部数据存储的准确性，数据结构（例如btree）不被破坏。InnoDB通过doublewrite buffer 和crash recovery实现了这一点：前者保证数据页的准确性，后者保证恢复时能够将所有的变更apply到数据页上。如果崩溃恢复时存在还未提交的事务，那么根据XA规则提交或者回滚事务。最终实例总能处于一致的状态。
+### Consistency（一致性）
 
-另外一种一致性指的是数据之间的约束不应该被事务所改变，例如外键约束。MySQL支持自动检查外键约束，或是做级联操作来保证数据完整性，但另外也提供了选项foreign_key_checks，如果您关闭了这个选项，数据间的约束和一致性就会失效。有些情况下，数据的一致性还需要用户的业务逻辑来保证。
+一致性指的是数据库需要总是保持一致的状态，即使实例崩溃了，也要能 **`保证数据的一致性，包括：内部数据存储的准确性，数据结构（例如：btree）不被破坏。InnoDB 通过 doublewrite buffer 和 crash recovery 实现了这一点：前者保证数据页的准确性，后者保证恢复时能够将所有的变更 Apply 到数据页上。如果崩溃恢复时存在还未提交的事务，那么根据 XA 规则提交或者回滚事务。最终实例总能处于一致的状态`**。
 
-Isolation （隔离性）
+**`另外一种一致性指的是数据之间的约束不应该被事务所改变，例如：外键约束`**。MySQL 支持自动检查外键约束，或是做级联操作来保证数据完整性，但另外也提供了选项 `foreign_key_checks`，如果您关闭了这个选项，数据间的约束和一致性就会失效。有些情况下，数据的一致性还需要用户的业务逻辑来保证。
+
+### Isolation（隔离性）
+
 隔离性是指多个事务不可以对相同数据同时做修改，事务查看的数据要么就是修改之前的数据，要么就是修改之后的数据。InnoDB支持四种隔离级别，如上文所述，这里不再重复。
 
-Durability（持久性）
-当一个事务完成了，它所做的变更应该持久化到磁盘上，永不丢失。这个特性除了和数据库系统相关外，还和你的硬件条件相关。InnoDB给出了许多选项，你可以为了追求性能而弱化持久性，也可以为了完全的持久性而弱化性能。
+### Durability（持久性）
 
-和大多数DBMS一样，InnoDB 也遵循WAL（Write-Ahead Logging）的原则，在写数据文件前，总是保证日志已经写到了磁盘上。通过Redo日志可以恢复出所有的数据页变更。
+当一个事务完成了，它所做的变更应该持久化到磁盘上，永不丢失。这个特性除了和数据库系统相关外，还和你的硬件条件相关。InnoDB 给出了许多选项，你**可以为了追求性能而弱化持久性，也可以为了完全的持久性而弱化性能**。
 
-为了保证数据的正确性，Redo log和数据页都做了checksum校验，防止使用损坏的数据。目前5.7版本默认支持使用CRC32的数据校验算法。
+和大多数 DBMS 一样，**`InnoDB 也遵循 WAL（Write-Ahead Logging）的原则，在写数据文件前，总是保证日志已经写到了磁盘上。通过 Redo 日志可以恢复出所有的数据页变更`**。
 
-为了解决半写的问题，即写一半数据页时实例crash，这时候数据页是损坏的。InnoDB使用double write buffer来解决这个问题，在写数据页到用户表空间之前，总是先持久化到double write buffer，这样即使没有完整写页，我们也可以从double write buffer中将其恢复出来。你可以通过innodb_doublewrite选项来开启或者关闭该特性。
+**`为了保证数据的正确性，Redo Log 和数据页都做了 checksum 校验，防止使用损坏的数据`**。目前 5.7 版本默认支持使用 CRC32 的数据校验算法。
 
-InnoDB通过这种机制保证了数据和日志的准确性的。你可以将实例配置成事务提交时将redo日志fsync到磁盘（innodb_flush_log_at_trx_commit = 1），数据文件的FLUSH策略（innodb_flush_method）修改为0_DIRECT，以此来保证强持久化。你也可以选择更弱化的配置来保证实例的性能。
+为了解决半写的问题，即写一半数据页时实例 crash，这时候数据页是损坏的。InnoDB 使用 **`double write buffer`** 来解决这个问题，**`在写数据页到用户表空间之前，总是先持久化到 double write buffer，这样即使没有完整写页，我们也可以从double write buffer 中将其恢复出来`**。你可以通过 **`innodb_doublewrite`** 选项来开启或者关闭该特性。
+
+InnoDB 通过这种机制保证了数据和日志的准确性的。你可以将实例配置成事务提交时将 redo 日志 fsync 到磁盘（`innodb_flush_log_at_trx_commit = 1`），数据文件的 FLUSH 策略（`innodb_flush_method`）修改为 `0_DIRECT`，以此来保证强持久化。你也可以选择更弱化的配置来保证实例的性能。
+
