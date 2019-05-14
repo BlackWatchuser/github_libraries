@@ -425,20 +425,22 @@ MySQL 5.7 实现了一种高优先级的事务调度方式。当事务处于高�
 
 这里涉及到事务锁模块，本文不展开描述，下次专门在事务锁相关主题的月报讲述，你可以通过官方[WL#6835](http://dev.mysql.com/worklog/task/?id=6835)获取更过关于高优先级事务的信息。
 
-trx_t::flush_observer
-阅读代码时发现这个在5.7版本新加的变量，从它的命名可以看出，其应该和脏页flush相关。flush_observer可以认为是一个标记，当某种操作完成时，对于带这种标记的page(buf_page_t::flush_observer)，需要保证完全刷到磁盘上。
+### trx_t::flush_observer
 
-该变量主要解决早期5.7版本建索引耗时太久的bug#74472：为表增加索引的操作非常慢，即使表上没几条数据。原因是InnoDB在5.7版本修正了建索引的方式，采用自底向上的构建方式，并在创建索引的过程中关闭了redo，因此在做完加索引操作后，必须将其产生的脏页完全写到磁盘中，才能认为索引构建完毕，所以发起了一次完全的checkpoint，但如果buffer pool中存在大量脏页时，将会非常耗时。
+阅读代码时发现这个在 5.7 版本新加的变量，从它的命名可以看出，其应该和脏页 flush 相关。**`flush_observer` 可以认为是一个标记，当某种操作完成时，对于带这种标记的 Page（`buf_page_t::flush_observer`），需要保证完全刷到磁盘上**。
 
-为了解决这一问题，引入了flush_observer，在建索引之前创建一个FlushObserver并分配给事务对象(trx_set_flush_observer)，同时传递给BtrBulk::m_flush_observer。
+该变量主要解决早期 5.7 版本建索引耗时太久的 [bug#74472](https://bugs.mysql.com/bug.php?id=74472)：为表增加索引的操作非常慢，即使表上没几条数据。原因是 InnoDB 在 5.7 版本修正了建索引的方式，采用自底向上的构建方式，并在创建索引的过程中关闭了 Redo，因此在做完加索引操作后，必须将其产生的脏页完全写到磁盘中，才能认为索引构建完毕，所以发起了一次完全的 `checkpoint`，但如果 `buffer pool` 中存在大量脏页时，将会非常耗时。
 
-在构建索引的过程中产生的脏页，通过mtr_commit将脏页转移到flush_list上时，顺便标记上flush_observer（add_dirty_page_to_flush_list —> buf_flush_note_modification）。
+为了解决这一问题，引入了 `flush_observer`，在建索引之前创建一个 **FlushObserver** 并分配给事务对象（`trx_set_flush_observer`），同时传递给 `BtrBulk::m_flush_observer`。
 
-当做完索引构建操作后，由于bulk load操作不记redo，需要保证DDL产生的所有脏页都写到磁盘，因此调用FlushObserver::flush，将脏页写盘（buf_LRU_flush_or_remove_pages）。在做完这一步后，才开始apply online DDL过程中产生的row log(row_log_apply)。
+在构建索引的过程中产生的脏页，通过 **mtr_commit** 将脏页转移到 `flush_list` 上时，顺便标记上 `flush_observer`（`add_dirty_page_to_flush_list —> buf_flush_note_modification`）。
 
-如果DDL被中断（例如session被kill），也需要调用FlushObserver::flush，将这些产生的脏页从内存移除掉，无需写盘。
+**`当做完索引构建操作后，由于 bulk load 操作不记 Redo，需要保证 DDL 产生的所有脏页都写到磁盘，因此调用 FlushObserver::flush，将脏页写盘（buf_LRU_flush_or_remove_pages）。在做完这一步后，才开始 apply online DDL 过程中产生的 row log（row_log_apply）`**。
 
-事务对象池
+如果 DDL 被中断（例如 session 被 kill），也需要调用 `FlushObserver::flush`，将这些产生的脏页从内存移除掉，无需写盘。
+
+### 事务对象池
+
 为了减少构建事务对象时的内存操作开销，尤其是短连接场景下的性能，InnoDB引入了一个池结构，可以很方便的分配和释放事务对象。实际上事务的事务锁对象也引用了池结构。
 
 事务池对应的全局变量为trx_pools，初始化为：
