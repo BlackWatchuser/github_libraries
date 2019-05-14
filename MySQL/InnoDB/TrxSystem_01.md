@@ -417,13 +417,13 @@ MySQL 5.7 实现了一种高优先级的事务调度方式。当事务处于高�
 
 #### 处理锁等待
 
-在对记录尝试加锁时，如果发现有别的事务和当前事务冲突（lock_re_other_has_conflicting），需要判断是否要加入到等待队列中（RecLock::add_to_wait）：
+在对记录尝试加锁时，如果发现有别的事务和当前事务冲突（`lock_re_other_has_conflicting`），需要判断是否要加入到等待队列中（`RecLock::add_to_wait`）：
 
-如果两个事务都设置了高优先级、但当前事务优先级较低，或者冲突的事务是一个后台进程开启的事务（例如dict_stat线程进行统计信息更新），则立刻失败该事务，并返回DB_DEADLOCK错误码；
+* 如果两个事务都设置了高优先级、但当前事务优先级较低，或者冲突的事务是一个后台进程开启的事务（例如 `dict_stat` 线程进行统计信息更新），则立刻失败该事务，并返回 **DB_DEADLOCK** 错误码；
 
-尝试将当前锁对象加入到等待队列中(RecLock::enqueue_priority)，高优先级的事务可以跳过锁等待队列(RecLock::jump_queue)，被跳过的事务需要被标记为异步回滚状态（RecLock::mark_trx_for_rollback），搜集到当前事务的trx_t::hit_list链表中。当阻塞当前事务的另外一个事务也处于等待状态、但等待另外一个不同的记录锁时，调用rollback_blocking_trx直接回滚掉，否则在进入锁等待之前再调用trx_kill_blocking依次回滚。
+* 尝试将当前锁对象加入到等待队列中（`RecLock::enqueue_priority`），高优先级的事务可以跳过锁等待队列（`RecLock::jump_queue`），被跳过的事务需要被标记为异步回滚状态（`RecLock::mark_trx_for_rollback`），搜集到当前事务的 `trx_t::hit_list` 链表中。当阻塞当前事务的另外一个事务也处于等待状态、但等待另外一个不同的记录锁时，调用 `rollback_blocking_trx` 直接回滚掉，否则在进入锁等待之前再调用 `trx_kill_blocking` 依次回滚。
 
-这里涉及到事务锁模块，本文不展开描述，下次专门在事务锁相关主题的月报讲述，你可以通过官方WL#6835 获取更过关于高优先级事务的信息。
+这里涉及到事务锁模块，本文不展开描述，下次专门在事务锁相关主题的月报讲述，你可以通过官方[WL#6835](http://dev.mysql.com/worklog/task/?id=6835)获取更过关于高优先级事务的信息。
 
 trx_t::flush_observer
 阅读代码时发现这个在5.7版本新加的变量，从它的命名可以看出，其应该和脏页flush相关。flush_observer可以认为是一个标记，当某种操作完成时，对于带这种标记的page(buf_page_t::flush_observer)，需要保证完全刷到磁盘上。
