@@ -1,3 +1,19 @@
+
+https://github.github.com/gfm/
+
+https://help.github.com/en/articles/basic-writing-and-formatting-syntax
+
+https://guides.github.com/features/mastering-markdown/
+
+https://help.github.com/en/categories/writing-on-github
+
+------
+[原文1](https://www.cnblogs.com/yabin/p/6366151.html)
+
+[原文2](https://www.cnblogs.com/shawWey/p/8931697.html)
+
+[原文3](https://mp.weixin.qq.com/s/1lRln5p-Qn97ygJ0pmkcVA)
+
 # 1. 标题：
 
 # h1
