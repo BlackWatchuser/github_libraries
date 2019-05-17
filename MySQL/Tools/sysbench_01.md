@@ -26,88 +26,46 @@ sysbench 1.1.0-faaff4f
 
 ## Usage
 
-
-
-
-## 
-
 ``` shell
-# /opt/sysbench/src/sysbench --help
-Usage:
-  sysbench [options]... [testname] [command]
 
-Commands implemented by most tests: prepare run cleanup help
-
-General options:
-  --threads=N                     number of threads to use [1]
-  --events=N                      limit for total number of events [0]
-  --time=N                        limit for total execution time in seconds [10]
-  --warmup-time=N                 execute events for this many seconds with statistics disabled before the actual benchmark run with statistics enabled [0]
-  --forced-shutdown=STRING        number of seconds to wait after the --time limit before forcing shutdown, or 'off' to disable [off]
-  --thread-stack-size=SIZE        size of stack per thread [64K]
-  --thread-init-timeout=N         wait time in seconds for worker threads to initialize [30]
-  --rate=N                        average transactions rate. 0 for unlimited rate [0]
-  --report-interval=N             periodically report intermediate statistics with a specified interval in seconds. 0 disables intermediate reports [0]
-  --report-checkpoints=[LIST,...] dump full statistics and reset all counters at specified points in time. The argument is a list of comma-separated values representing the amount of time in seconds elapsed from start of test when report checkpoint(s) must be performed. Report checkpoints are off by default. []
-  --debug[=on|off]                print more debugging info [off]
-  --validate[=on|off]             perform validation checks where possible [off]
-  --help[=on|off]                 print help and exit [off]
-  --version[=on|off]              print version and exit [off]
-  --config-file=FILENAME          File containing command line options
-  --luajit-cmd=STRING             perform LuaJIT control command. This option is equivalent to 'luajit -j'. See LuaJIT documentation for more information
-
-Pseudo-Random Numbers Generator options:
-  --rand-type=STRING   random numbers distribution {uniform, gaussian, special, pareto, zipfian} to use by default [special]
-  --rand-seed=N        seed for random number generator. When 0, the current time is used as an RNG seed. [0]
-  --rand-spec-iter=N   number of iterations for the special distribution [12]
-  --rand-spec-pct=N    percentage of the entire range where 'special' values will fall in the special distribution [1]
-  --rand-spec-res=N    percentage of 'special' values to use for the special distribution [75]
-  --rand-pareto-h=N    shape parameter for the Pareto distribution [0.2]
-  --rand-zipfian-exp=N shape parameter (exponent, theta) for the Zipfian distribution [0.8]
-
-Log options:
-  --verbosity=N verbosity level {5 - debug, 0 - only critical messages} [3]
-
-  --percentile=N       percentile to calculate in latency statistics (1-100). Use the special value of 0 to disable percentile calculations [95]
-  --histogram[=on|off] print latency histogram in report [off]
-
-General database options:
-
-  --db-driver=STRING  specifies database driver to use ('help' to get list of available drivers) [mysql]
-  --db-ps-mode=STRING prepared statements usage mode {auto, disable} [auto]
-  --db-debug[=on|off] print database-specific debug information [off]
-
-
-Compiled-in database drivers:
-  mysql - MySQL driver
-
-mysql options:
-  --mysql-host=[LIST,...]          MySQL server host [localhost]
-  --mysql-port=[LIST,...]          MySQL server port [3306]
-  --mysql-socket=[LIST,...]        MySQL socket
-  --mysql-user=STRING              MySQL user [sbtest]
-  --mysql-password=STRING          MySQL password []
-  --mysql-db=STRING                MySQL database name [sbtest]
-  --mysql-ssl=STRING               SSL mode. This accepts the same values as the --ssl-mode option in the MySQL client utilities. Disabled by default [disabled]
-  --mysql-ssl-key=STRING           path name of the client private key file
-  --mysql-ssl-ca=STRING            path name of the CA file
-  --mysql-ssl-cert=STRING          path name of the client public key certificate file
-  --mysql-ssl-cipher=STRING        use specific cipher for SSL connections []
-  --mysql-compression[=on|off]     use compression, if available in the client library [off]
-  --mysql-debug[=on|off]           trace all client library calls [off]
-  --mysql-ignore-errors=[LIST,...] list of errors to ignore, or "all" [1213,1020,1205]
-  --mysql-dry-run[=on|off]         Dry run, pretend that all MySQL client API calls are successful without executing them [off]
-
-Compiled-in tests:
-  fileio - File I/O test
-  cpu - CPU performance test
-  memory - Memory functions speed test
-  threads - Threads subsystem performance test
-  mutex - Mutex performance test
-
-See 'sysbench <testname> help' for a list of options for each test.
 ```
 
+``` shell
+# sysbench cpu help
+sysbench 1.1.0-faaff4f (using bundled LuaJIT 2.1.0-beta3)
+
+cpu options:
+  --cpu-max-prime=N upper limit for primes generator [10000]
+
+# sysbench memory help
+sysbench 1.1.0-faaff4f (using bundled LuaJIT 2.1.0-beta3)
+
+memory options:
+  --memory-block-size=SIZE    size of memory block for test [1K]
+  --memory-total-size=SIZE    total size of data to transfer [100G]
+  --memory-scope=STRING       memory access scope {global,local} [global]
+  --memory-hugetlb[=on|off]   allocate memory from HugeTLB pool [off]
+  --memory-oper=STRING        type of memory operations {read, write, none} [write]
+  --memory-access-mode=STRING memory access mode {seq,rnd} [seq]
+
+# sysbench fileio help
+sysbench 1.1.0-faaff4f (using bundled LuaJIT 2.1.0-beta3)
+
+fileio options:
+  --file-num=N                  number of files to create [128]
+  --file-block-size=N           block size to use in all IO operations [16384]
+  --file-total-size=SIZE        total size of files to create [2G]
+  --file-test-mode=STRING       test mode {seqwr, seqrewr, seqrd, rndrd, rndwr, rndrw}
+  --file-io-mode=STRING         file operations mode {sync,async,mmap} [sync]
+  --file-async-backlog=N        number of asynchronous operatons to queue per thread [128]
+  --file-extra-flags=[LIST,...] list of additional flags to use to open files {sync,dsync,direct} []
+  --file-fsync-freq=N           do fsync() after this number of requests (0 - don't use fsync()) [100]
+  --file-fsync-all[=on|off]     do fsync() after each write operation [off]
+  --file-fsync-end[=on|off]     do fsync() at the end of test [on]
+  --file-fsync-mode=STRING      which method to use for synchronization {fsync, fdatasync} [fsync]
+  --file-merged-requests=N      merge at most this number of IO requests if possible (0 - don't merge) [0]
+  --file-rw-ratio=N             reads/writes ratio for combined test [1.5]
+```
 
 ------
 
@@ -183,7 +141,7 @@ Threads fairness:
 
 ## 总结
 
-如果多台服务器进行 CPU 性能对比，当线程和素数个数一定时：相同时间，比较 event；相同 event，比较时间；时间和 event 都相同，比较 stddev (标准差)。
+如果多台服务器进行 CPU 性能对比，**`当线程和素数个数一定时：相同时间，比较 event；相同 event，比较时间；时间和 event 都相同，比较 stddev (标准差)`**。
 
 ------
 
@@ -478,3 +436,119 @@ Threads fairness:
 
 ## IOPS
 
+``` shell
+# sysbench fileio --file-total-size=50G --file-test-mode=rndrw --file-io-mode=async prepare / run / cleanup
+
+# R4.2XLARGE + 500 GB gp2
+
+Throughput:
+         read:  IOPS=2400.26 37.50 MiB/s (39.33 MB/s)
+         write: IOPS=1608.15 25.13 MiB/s (26.35 MB/s)
+         fsync: IOPS=3540.56
+
+Latency (ms):
+         min:                                  0.00
+         avg:                                  0.13
+         max:                                 14.66
+         95th percentile:                      0.72
+         sum:                               9950.20
+
+# R5.2XLARGE + 500 GB gp2
+
+Throughput:
+         read:  IOPS=2768.13 43.25 MiB/s (45.35 MB/s)
+         write: IOPS=1846.08 28.85 MiB/s (30.25 MB/s)
+         fsync: IOPS=4059.71
+
+Latency (ms):
+         min:                                  0.00
+         avg:                                  0.11
+         max:                                 23.48
+         95th percentile:                      0.63
+         sum:                               9963.82
+
+```
+
+------
+
+# sysbench 的安装和做性能测试
+
+[原文](http://imysql.cn/node/312)
+
+sysbench 是一个模块化的、跨平台、多线程基准测试工具，主要用于评估测试各种不同系统参数下的数据库负载情况。关于这个项目的详细介绍请看：http://sysbench.sourceforge.net。
+它主要包括以下几种方式的测试：
+
+1. cpu性能
+2. 磁盘io性能
+3. 调度程序性能
+4. 内存分配及传输速度
+5. POSIX线程性能
+6. 数据库性能(OLTP基准测试)
+
+目前sysbench主要支持 MySQL, PgSQL, Oracle 这3种数据库。
+
+## 一、安装
+
+首先，在 http://sourceforge.net/projects/sysbench 下载源码包。
+接下来，按照以下步骤安装：
+
+``` shell
+tar zxf sysbench-0.4.8.tar.gz
+cd sysbench-0.4.8
+./configure && make && make install
+strip /usr/local/bin/sysbench
+```
+
+以上方法适用于 MySQL 安装在标准默认目录下的情况，如果 MySQL 并不是安装在标准目录下的话，那么就需要自己指定 MySQL 的路径了。比如我的 MySQL 喜欢自己安装在 /usr/local/mysql 下，则按照以下方法编译：
+
+``` shell
+./configure --with-mysql-includes=/usr/local/mysql/include --with-mysql-libs=/usr/local/mysql/lib && make && make install
+```
+
+当然了，**`用上面的参数编译的话，就要确保你的 MySQL lib 目录下有对应的 so 文件，如果没有，可以自己下载 devel 或者 share 包来安装`**。
+另外，如果想要让 sysbench 支持 pgsql/oracle 的话，就需要在编译的时候加上参数 **--with-pgsql** 或者
+**--with-oracle** 这 2 个参数默认是关闭的，只有 MySQL 是默认支持的。
+
+## 二、开始测试
+
+编译成功之后，就要开始测试各种性能了，测试的方法官网网站上也提到一些，但涉及到 OLTP 测试的部分却不够准确。在这里我大致提一下：
+
+### 1. CPU 性能测试
+
+``` shell
+sysbench --test=cpu --cpu-max-prime=20000 run
+```
+
+CPU 测试主要是进行素数的加法运算，在上面的例子中，指定了最大的素数为 20000，自己可以根据机器 CPU 的性能来适当调整数值。
+
+### 2. 线程测试
+
+sysbench --test=threads --num-threads=64 --thread-yields=100 --thread-locks=2 run
+
+### 3. 磁盘 IO 性能测试
+
+``` shell
+sysbench --test=fileio --num-threads=16 --file-total-size=3G --file-test-mode=rndrw prepare / run / cleanup
+```
+
+上述参数指定了最大创建16个线程，创建的文件总大小为 3G，文件读写模式为随机读。
+
+### 4. 内存测试
+
+``` shell
+sysbench --test=memory --memory-block-size=8k --memory-total-size=4G run
+```
+
+上述参数指定了本次测试整个过程是在内存中传输 4G 的数据量，每个 block 大小为 8K。
+
+### 5、OLTP 测试
+
+``` shell
+sysbench --test=oltp --mysql-table-engine=myisam --oltp-table-size=1000000 \
+--mysql-socket=/tmp/mysql.sock --mysql-user=test --mysql-host=localhost \
+--mysql-password=test prepare / run / cleanup
+```
+
+上述参数指定了本次测试的表存储引擎类型为 myisam，这里需要注意的是，官方网站上的参数有一处有误，即 --mysql-table-engine，官方网站上写的是 --mysql-table-type，这个应该是没有及时更新导致的。另外，指定了表最大记录数为 1000000，其他参数就很好理解了，主要是指定登录方式。测试 OLTP 时，可以自己先创建数据库 sbtest，或者自己用参数 --mysql-db 来指定其他数据库。--mysql-table-engine 还可以指定为 innodb 等 MySQL 支持的表存储引擎类型。
+
+------
