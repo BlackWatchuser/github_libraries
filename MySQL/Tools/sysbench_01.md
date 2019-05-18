@@ -549,6 +549,6 @@ sysbench --test=oltp --mysql-table-engine=myisam --oltp-table-size=1000000 \
 --mysql-password=test prepare / run / cleanup
 ```
 
-上述参数指定了本次测试的表存储引擎类型为 myisam，这里需要注意的是，官方网站上的参数有一处有误，即 --mysql-table-engine，官方网站上写的是 --mysql-table-type，这个应该是没有及时更新导致的。另外，指定了表最大记录数为 1000000，其他参数就很好理解了，主要是指定登录方式。测试 OLTP 时，可以自己先创建数据库 sbtest，或者自己用参数 --mysql-db 来指定其他数据库。--mysql-table-engine 还可以指定为 innodb 等 MySQL 支持的表存储引擎类型。
+上述参数指定了本次测试的表存储引擎类型为 MyISAM，这里需要注意的是，官方网站上的参数有一处有误，即 `--mysql-table-engine`，官方网站上写的是 `--mysql-table-type`，这个应该是没有及时更新导致的。另外，指定了表最大记录数为 1000000，其他参数就很好理解了，主要是指定登录方式。测试 **OLTP** 时，可以自己先创建数据库 sbtest，或者自己用参数 `--mysql-db` 来指定其他数据库。`--mysql-table-engine` 还可以指定为 InnoDB 等 MySQL 支持的表存储引擎类型。
 
 ------
