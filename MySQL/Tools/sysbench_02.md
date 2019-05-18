@@ -1,4 +1,4 @@
-# sysbench 在美团点评中的应用
+# SYSBENCH 在美团点评中的应用
 
 [原文](https://tech.meituan.com/2017/07/14/sysbench-meituan.html)
 
