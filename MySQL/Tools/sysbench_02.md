@@ -51,9 +51,9 @@ sysbench 提供了丰富的测试选项，包括测试表数量、单表数据�
 
 如何将新硬件和新版本的性能发挥到极致，是每个 DBA 都会遇到的问题。美团点评 DBA 团队在前期理论调研后，会设计符合公司业务特征的场景进行严格的性能测试，确定最终的参数配置方案。下面以确定 MySQL 5.7 中多线程复制的 **`slave_parallel_workers`** 参数为例，来了解如何使用 sysbench 来优化参数配置。
 
-为了测试从库的复制速度，我们使用 sysbench 的 **`oltp_write_only.lua`**（包括增、删、改）在主库制造负载（**TPS:33,336**），观察从库的TPS，如下图所示。
+为了测试从库的复制速度，我们使用 sysbench 的 **`oltp_write_only.lua`**（包括增、删、改）在主库制造负载（**TPS:33,336**），观察从库的 TPS，如下图所示。
 
-![]( "slave_parallel_workers")
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/slave_parallel_workers_20170714.png "slave_parallel_workers")
 
 从上图看出，工作线程在 8 时，从库的 TPS 达到最大。到这里为止，对于数据库新人来说，我们可以很自信的宣称自己学会了通过测试进行数据库调优。但是我们不能只满足于此，应该做更深入的探究。比如，多线程复制的原理是怎样的？如何进一步提升从库的 TPS ？建议有兴趣的读者可以继续调研 **`binlog_group_commit_sync_delay`** 和 **`binlog_group_commit_sync_no_delay_count`** 参数。
 
@@ -63,13 +63,13 @@ sysbench 提供了丰富的测试选项，包括测试表数量、单表数据�
 
 sysbench 不仅具有丰富的功能，还具有优良的设计与实现。为了把测试场景完全交给客户定制，所有的测试用例，均使用 Lua 编写；如果需要支持新的数据库，只要实现 sysbench 提供的 10 来个接口即可；而其他通用功能，均由 sysbench 提供。架构图如下：
 
-![]( "架构图")
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/sysbench_arch_20170714.png "架构图")
 
 使用过 sysbench 或者其他同类型测试工具的都知道，**`数据库测试分为三个阶段，包括prepare 阶段、warmup 阶段、运行阶段`**。这三个过程的实现完全使用 Lua 来控制，因此很容易定制。**`sysbench 提供的默认测试用例有只读测试、只写测试、读写混合等`**。这些测试用例也是用 Lua 实现的，通过修改这些测试用例，测试人员可以很快的掌握编写自己测试用例的技巧。
 
 比如，日前在 **`评估 MySQL 5.7 JSON 替代 MongoDB 的可行性`**。与业务人员交流过程中发现，业务中并没有使用 MongoDB 的一些复杂特性，比如内嵌 JS 代码、map/reduce 等特性，但是其 TPS 较高，较为关注 MySQL 5.7 + JSON 与 MongoDB 的性能比较。因此需要一款可以测试 MySQL JSON 性能的测试工具。在前一节的分析中，我们只需更改 sysbench 中几个 Lua 文件即可拥有这样的测试工具。
 
-![]( "测试过程")
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/sysbench_pwr_20170714.png "测试过程")
 
 ### 性能可伸缩
 
@@ -79,7 +79,7 @@ sysbench 不仅具有丰富的功能，还具有优良的设计与实现。为�
 
 数据库的性能往往不能用简单的 TPS 或者 QPS 来反映，还需要知道压测过程中系统的运行是否平稳（响应时间和 QPS 等）。
 
-![]( "直方图")
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/tps_histogram_20170714.png "直方图")
 
 如果仅给出系统的最大 TPS，比如 10000 左右，可能掩盖了系统中的重要信息。比如上图中，系统的 TPS 随着时间，周期性的严重抖动，值得数据库和开发人员关注。通过打开 sysbench 的周期性报表，即可获得这样的统计信息。
 
@@ -89,11 +89,11 @@ sysbench 不仅具有丰富的功能，还具有优良的设计与实现。为�
 
 如此一来，全局的事务计数器与 SQL 计数器就会成为多个线程竞争的热点，影响 sysbench 的扩展性甚至严重干扰测试结果，尤其是在目前的多核处理架构，如下图所示：
 
-![]()
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/multi_thread_hot_point_20170714.png)
 
 据某著名数据库专家的话，**`凡是有热点的地方，解决之道只需一个字：拆。比如大家耳熟能详的分库分表，将大表拆成小表，大库拆成小库`**；像在大内存的系统中，MySQL 会自动创建多个 buffer pool instance，就是为了避免多个线程同时去竞争一个互斥量。sysbench 在解决这个问题时，也不能例外。它 **`为每个工作线程都分配一个局部的计数器，增加计数时，只需更新线程内部的计数器；当需要获得全局计数时，把局部计数器的值汇总即可`**。这种办法获得的计数值精确度比上一种办法要低，但是其可以线性扩展，而且在性能数据收集这个角度其精确度已经足够了。具体代码在 `sb_counter.c` 中，有兴趣的可以下载代码阅读。
 
-![]()
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/sysbench_counter_shard_20170714.png)
 
 ### SQL 响应时间分布
 
@@ -107,19 +107,19 @@ sysbench 正是使用该方法做时间统计。当 sysbench 得到一个响应�
 
 **`当测试完成时，需要将 k 转化为响应时间。算法为 respone_time = exp((k/55.535)-6.908)。这样就可以使用较少的空间，完成较大时间跨度的记录，而且精度是动态变化的，响应时间越小，精度越高`**。
 
-![]( "精确值与误差")
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/sysbench_k_20170714.png "精确值与误差")
 
 ### 响应时间收集之热点
 
 在官方给出的 MySQL 性能测试数据库中，我们可以看到在高端机型上 QPS 已经达到百万，即使在一般的企业级服务器，也能达到几十万的级别。在前面的介绍中知道，响应时间是记录在一个数组上的，如果响应时间比较稳定，假设有 50% 的响应时间是落在一个刻度上，那么该刻度对应的变量就会被每秒更新几十万次，形成一个更新热点。参考下图：
 
-![]()
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/latency_hot_point_20170714.png)
 
 在前面性能信息收集上也遇到类似的热点问题，当然我们也可以给每个线程各配备一个 response[1024] 的数组来避免热点。sysbench 采用了类似的方法，但是做了些改变。它也是采用多个 response[1024] 的数组，但是其数量被固定为 128 个。
 
 ### 响应时间收集之避免热点
 
-![]()
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/sysbench_reponse_array_20170714.png)
 
 ## 结论
 
