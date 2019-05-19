@@ -4,7 +4,7 @@
 
 ## 一、案例分析
 
-### 2.1 环境说明
+### 1.1 环境说明
 
 MySQL 5.6 事务隔离级别为 **`RR`**：
 
@@ -20,7 +20,7 @@ CREATE TABLE `ty` (
 insert into ty (a,b) values (2,3),(5,4),(6,7);
 ```
 
-### 2.2 测试用例
+### 1.2 测试用例
 
 | T2 | T1 |
 | :- | :- |
@@ -30,7 +30,7 @@ insert into ty (a,b) values (2,3),(5,4),(6,7);
 | insert into ty(a,b) values(2,10); |  |
 |  | delete from  ty where  a=5; <br>ERROR 1213 (40001): Deadlock found when trying to get lock; try restarting transaction |
                                                  
-### 2.3 死锁日志
+### 1.3 死锁日志
 
 ``` sql
 ------------------------
@@ -72,7 +72,7 @@ RECORD LOCKS space id 219 page no 4 n bits 72 index `idxa` of table `test`.`ty` 
 *** WE ROLL BACK TRANSACTION (1)
 ```
 
-### 2.3 分析死锁日志
+### 1.4 分析死锁日志
 
 首先要理解的是，**`对同一个字段申请加锁是需要排队`**。 
 
@@ -96,7 +96,7 @@ RECORD LOCKS space id 219 page no 4 n bits 72 index `idxa` of table `test`.`ty` 
 
 ## 二、案例（二）
 
-### 3.1 索引为唯一键
+### 2.1 索引为唯一键
 
 MySQL 5.6 事务隔离级别为 **`RR`**：
 
@@ -112,7 +112,7 @@ CREATE TABLE `t2` (
 insert into t2 (a,b) values (2,3),(5,4),(6,7)
 ```
 
-### 3.2 测试用例
+### 2.2 测试用例
 
 | T2 | T1 |
 | :- | :- |
@@ -122,7 +122,7 @@ insert into t2 (a,b) values (2,3),(5,4),(6,7)
 | insert into ty(a,b) values(2,10); |  |
 |  | delete from  ty where  a=5; <br>ERROR 1213 (40001): Deadlock found when trying to get lock; try restarting transaction |
 
-### 3.3 死锁日志
+### 2.3 死锁日志
 
 ``` sql
 ------------------------
@@ -164,7 +164,7 @@ RECORD LOCKS space id 221 page no 4 n bits 72 index `idxa` of table `test`.`t2` 
 *** WE ROLL BACK TRANSACTION (1)
 ```
 
-### 3.4 分析死锁日志
+### 2.4 分析死锁日志
 
 首先我们要特别说明 delete 的加锁逻辑：
 
@@ -200,7 +200,7 @@ RECORD LOCKS space id 221 page no 4 n bits 72 index `idxa` of table `test`.`t2` 
 
 ## 一、案例分析
 
-### 2.1 测试环境准备
+### 1.1 测试环境准备
 
 Percona server 5.6.24 事务隔离级别为 **RR**：
 
@@ -229,7 +229,7 @@ VALUES
 (5,50,1,'retail',1,0,'0',0,'2017-05-09 15:56:16','2017-05-09 15:56:16');
 ```
 
-### 2.2 本测试案例场景是两个事务都删除不存的行，然后再 INSERT 记录：
+### 1.2 本测试案例场景是两个事务都删除不存的行，然后再 INSERT 记录：
 
 | T2 | T1 |
 | :- | :- |
@@ -239,7 +239,7 @@ VALUES
 |  | test [RW] 02:50:43 > INSERT INTO t4(`kdt_id`, `admin_id`, `biz`, `role_id`, `shop_id`, `operator`, `operator_id`, `create_time`, `update_time`) VALUES ('18', '2', 'retail', '2', '0', '0', '0', CURRENT_TIMESTAMP,CURRENT_TIMESTAMP); |
 | test [RW] 02:51:02 > INSERT INTO t4(`kdt_id`, `admin_id`, `biz`, `role_id`, `shop_id`, `operator`, `operator_id`, `create_time`, `update_time`) VALUES ('15', '1', 'retail', '2', '0', '0', '0', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP); <br>ERROR 1213 (40001): Deadlock found when trying to get lock; try restarting transaction |  |
 
-### 2.3 死锁日志
+### 1.3 死锁日志
 
 ``` sql
 ------------------------
@@ -281,7 +281,7 @@ RECORD LOCKS space id 225 page no 4 n bits 72 index `uniq_kid_aid_biz_rid` of ta
 *** WE ROLL BACK TRANSACTION (2)
 ```
 
-### 2.4 死锁日志分析
+### 1.4 死锁日志分析
 
 首先根据《死锁案例一》和《一个最不可思议的 MySQL 死锁分析》中强调 DELETE 不存在的记录是要加上 GAP 锁，事务日志中显示 **`Lock_mode X wait`**。
 
@@ -293,22 +293,325 @@ RECORD LOCKS space id 225 page no 4 n bits 72 index `uniq_kid_aid_biz_rid` of ta
 
 3. T1 的 insert 语句申请插入意向锁，但是插入意向锁和 T2 持有的 X GAP（**`lock_mode X locks gap before rec`**）冲突，故等待 T2 中的 GAP 锁释放。
 
-> Gap locks in InnoDB are “purely inhibitive”, **`which means they only stop other transactions from inserting to the gap. They do not prevent different transactions from taking gap locks on the same gap`**. Thus, a gap X-lock has the same effect as a gap S-lock.
+> Gap locks in InnoDB are "purely inhibitive", **`which means they only stop other transactions from inserting to the gap. They do not prevent different transactions from taking gap locks on the same gap`**. Thus, a gap X-lock has the same effect as a gap S-lock.
 
 4. T2 的 insert 语句申请插入意向锁，但是插入意向锁和 T1 持有的 X GAP（**`lock_mode X locks gap before rec`**）冲突，故等待 T1 中的 GAP 锁释放。
 
 T1(INSERT ）等待T2(DELETE),T2(INSERT)等待T1(DELETE) 故而循环等待，出现死锁。
 有兴趣的读者朋友可以测试一下 delete 存在记录的场景。
 
-### 2.6 如何解决呢？
+### 1.5 如何解决呢？
 
 1. 先 **SELECT** 检查一下看看是否存在，然后再删除。这里也存在两个或者多个会话并发执行同一个 SELECT WHERE 条件的，这里需要开发同学做处理。
 
 2. 使用 **`insert into on deuplicate key`** 语法不存在则插入，而不是先删除再插入。
 
-## 三、小结
+## 二、小结
 
 **RR** 事务隔离级别和 GAP 锁是导致死锁的常见原因，但是业务逻辑设计不合理也会触发死锁，本文的案例可以通过修改业务逻辑最终将死锁解决。
 
 ------
 
+# 死锁案例（三）
+
+## 一、背景知识
+
+### 1.1 insert 锁机制
+
+在分析死锁案例之前，我们先学习一下背景知识 insert 语句的加锁策略。我们先来看看官方定义:
+
+> **`An insert intention lock is a type of gap lock set by INSERT operations prior to row insertion. This lock signals the intent to insert in such a way that multiple transactions inserting into the same index gap need not wait for each other if they are not inserting at the same position within the gap. Suppose that there are index records with values of 4 and 7. Separate transactions that attempt to insert values of 5 and 6, respectively, each lock the gap between 4 and 7 with insert intention locks prior to obtaining the exclusive lock on the inserted row, but do not block each other because the rows are nonconflicting.`**
+
+相信大部分的 DBA 同行都知道在事务执行 insert 的时候会申请一把插入意向锁（**`Insert Intention Lock`**)。在多事务并发写入不同数据记录至同一索引间隙的时候，并不需要等待其他事务完成，不会发生锁等待。
+
+假设有一个索引记录包含键值 4 和 7，不同的事务分别插入 5 和 6，每个事务都会产生一个加在 4 - 7 之间的插入意向锁，获取在插入行上的排它锁，但是不会被互相锁住，因为数据行并不冲突。
+
+但是如果遇到唯一键呢？ 
+
+> **`If a duplicate-key error occurs, a shared lock on the duplicate index record is set.`**
+
+**`对于 INSERT 操作来说，若发生唯一约束冲突，则需要对冲突的唯一索引加上 S Next-key Lock`**。从这里会发现，即使是 **RC** 事务隔离级别，也同样会存在 **Next-Key Lock** 锁，从而阻塞并发。然而，文档没有说明的是，**`对于检测到冲突的唯一索引，等待线程在获得 S Lock 之后，还需要对下一个记录进行加锁`**，在源码中由函数 `row_ins_scan_sec_index_for_duplicate` 进行判断。via（MySQL REPLACE 死锁问题深入剖析）。我们可以通过如下例子进行验证：
+
+### 1.2 验证
+
+准备环境，默认事务隔离级别为 **RC** 模式：
+
+``` sql
+CREATE TABLE t8 (
+  a int AUTO_INCREMENT PRIMARY KEY,
+  b int,
+  c int,
+unique key ub(b)
+) engine=InnoDB;
+
+insert into t8 values (NULL,1,2)
+```
+
+| session1 | session2 |
+| :- | :- |
+| begin; |  |
+| delete from t8 where b = 1; | begin; |
+|  | insert into t8 values (NULL,1); |
+| commit; |  |
+|  | update t8 set c=13 where b=1; |
+
+### 1.3 过程分析
+
+在每次执行一条语句之后都执行 **`show innodb engine status`** 查看事务的状态，
+**执行完 delete 语句后**，事务相关日志显示如下:
+
+``` sql
+---TRANSACTION 462308671, ACTIVE 6 sec
+
+3 lock struct(s), heap size 360, 2 row lock(s), undo log entries 1
+
+MySQL thread id 3796960, OS thread handle 0x7f78eaabe700, query id 781051370 localhost root init
+
+show engine innodb status
+
+TABLE LOCK table `test`.`t8` trx id 462308671 lock mode IX
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308671 lock_mode X locks rec but not gap
+
+RECORD LOCKS space id 232 page no 3 n bits 72 index `PRIMARY` of table `test`.`t8` trx id 462308671 lock_mode X locks rec but not gap
+```
+
+从日志中我们可以看到 delete 语句获取了唯一索引 ub 和主键两个行级锁（**`lock_mode X locks rec but not gap`**）。
+
+**执行完 insert 之后**，再查看 `innodb engine status`，事务相关日志显示如下:
+
+``` sql
+LIST OF TRANSACTIONS FOR EACH SESSION:
+
+---TRANSACTION 462308676, ACTIVE 4 sec inserting
+
+mysql tables in use 1, locked 1
+
+LOCK WAIT 2 lock struct(s), heap size 360, 1 row lock(s), undo log entries 1
+
+MySQL thread id 3796966, OS thread handle 0x7f78ea5c4700, query id 781051460 localhost root update
+
+insert into t8 values (NULL,1,2)
+
+------- TRX HAS BEEN WAITING 4 SEC FOR THIS LOCK TO BE GRANTED:
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308676 lock mode S waiting
+
+------------------
+
+TABLE LOCK table `test`.`t8` trx id 462308676 lock mode IX
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308676 lock mode S waiting
+
+---TRANSACTION 462308671, ACTIVE 70 sec
+
+3 lock struct(s), heap size 360, 2 row lock(s), undo log entries 1
+
+MySQL thread id 3796960, OS thread handle 0x7f78eaabe700, query id 781051465 localhost root init
+
+show engine innodb status
+
+TABLE LOCK table `test`.`t8` trx id 462308671 lock mode IX
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308671 lock_mode X locks rec but not gap
+
+RECORD LOCKS space id 232 page no 3 n bits 72 index `PRIMARY` of table `test`.`t8` trx id 462308671 lock_mode X locks rec but not gap
+```
+
+根据官方的介绍，并结合日志，我们可以看到 `insert into t8 values (NULL,1,2);` 在申请一把 **`S Next-key-Lock`** 锁，显示 **`lock mode S waiting`**。这里想给大家说明的是在 InnoDB 日志中如果提示 **`lock mode S /lock mode X`**，其实都是 Gap 锁，如果是行记录锁会提示 **but not gap**，请读者朋友们在自己分析死锁日志的时候注意。
+
+session1 delete 语句提交之后，session2 的 insert 不要提交，不要提交，不要提交。再次查看 `innodb engine status`，事务相关日志显示如下：
+
+``` sql
+------------
+TRANSACTIONS
+------------
+
+Trx id counter 462308678
+
+Purge done for trxs n:o < 462308678 undo n:o < 0 state: running but idle
+
+History list length 1845
+
+LIST OF TRANSACTIONS FOR EACH SESSION:
+
+---TRANSACTION 462308671, not started
+
+MySQL thread id 3796960, OS thread handle 0x7f78eaabe700, query id 781051526 localhost root init
+
+show engine innodb status
+
+---TRANSACTION 462308676, ACTIVE 41 sec
+
+3 lock struct(s), heap size 360, 2 row lock(s), undo log entries 1
+
+MySQL thread id 3796966, OS thread handle 0x7f78ea5c4700, query id 781051460 localhost root cleaning up
+
+TABLE LOCK table `test`.`t8` trx id 462308676 lock mode IX
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308676 lock mode S
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308676 lock mode S locks gap before rec
+```
+
+session1 中的事务因为提交已经结束。InnoDB 中的事务列表中只剩下 session2 中的 insert 的事务了。从获取锁的状态上看 insert 获取了一把 **`S Next-key Lock`** 锁和插入行之前的 **`S GAP`** 锁。看到这里大家是否有疑惑，官方文档说:
+
+> INSERT sets an exclusive lock on the inserted row. This lock is an index-record lock, not a next-key lock (that is, there is no gap lock) and does not prevent other sessions from inserting into the gap before the inserted row.
+
+insert 成功的记录上会加一把 X 行锁，为什么看不见呢？我们再在 session1 中执行 `update t8 set c=13 where b=1;` 并查看事务日志：
+
+``` sql
+------------
+TRANSACTIONS
+------------
+
+Trx id counter 462308679
+
+Purge done for trxs n:o < 462308678 undo n:o < 0 state: running but idle
+
+History list length 1845
+
+LIST OF TRANSACTIONS FOR EACH SESSION:
+
+---TRANSACTION 462308678, ACTIVE 12 sec starting index read
+
+mysql tables in use 1, locked 1
+
+LOCK WAIT 2 lock struct(s), heap size 360, 1 row lock(s)
+
+MySQL thread id 3796960, OS thread handle 0x7f78eaabe700, query id 781059217 localhost root updating
+
+update c set c=13 where b=1
+
+------- TRX HAS BEEN WAITING 12 SEC FOR THIS LOCK TO BE GRANTED:
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308678 lock_mode X locks rec but not gap waiting
+
+------------------
+
+TABLE LOCK table `test`.`t8` trx id 462308678 lock mode IX
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308678 lock_mode X locks rec but not gap waiting
+
+---TRANSACTION 462308676, ACTIVE 5113 sec
+
+4 lock struct(s), heap size 1184, 3 row lock(s), undo log entries 1
+
+MySQL thread id 3796966, OS thread handle 0x7f78ea5c4700, query id 781059230 localhost root init
+
+show engine innodb status
+
+TABLE LOCK table `test`.`t8` trx id 462308676 lock mode IX
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308676 lock mode S
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308676 lock mode S locks gap before rec
+
+RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` trx id 462308676 lock_mode X locks rec but not gap
+```
+
+从日志中可以看到 **session2** 的事务持有的锁多了一把 **`lock_mode X locks rec but not gap`**，也即是 session2 对 insert 成功的记录加上的 X 行锁。 
+
+分析至此，对于并发 insert 造成唯一键冲突的时候 insert 的加锁策略是:
+
+**`第一阶段 唯一性约束检查，先申请 LOCK_S + LOCK_ORDINARY`**
+
+**`第二阶段 获取阶段一的锁并且成功执行 insert 语句`**
+
+**`插入的位置有 Gap 锁：LOCK_INSERT_INTENTION，为了防止其他 insert 唯一键冲突`**
+
+**`新数据插入：LOCK_X + LOCK_REC_NOT_GAP`**
+
+## 二、案例分析
+
+> **`本案例是两个事务并发 insert 唯一键冲突和 Gap 锁一起导致的死锁案例。`**
+
+### 2.1 环境 
+
+``` sql
+create table t7(
+  id int not null primary key auto_increment,
+  a int not null ,
+  unique key ua(a)
+) engine=innodb;
+
+insert into t7 (id,a) values (1,1),(5,4),(20,20),(25,12);
+```
+
+### 2.2 测试用例
+
+| T1 | T2 |
+| :- | :- |
+| begin; | begin; |
+|  | insert into t7 (id,a) values (26,10); |
+| insert into t7 (id,a) values (30,10); |  |
+|  | insert into t7 (id,a) values (40,9); |
+
+### 2.3 死锁日志
+
+``` sql
+------------------------
+LATEST DETECTED DEADLOCK
+------------------------
+
+2017-09-17 15:15:03 7f78eac15700
+
+*** (1) TRANSACTION:
+
+TRANSACTION 462308661, ACTIVE 6 sec inserting
+mysql tables in use 1, locked 1
+LOCK WAIT 2 lock struct(s), heap size 360, 1 row lock(s), undo log entries 1
+MySQL thread id 3796966, OS thread handle 0x7f78ead9d700, query id 781045166 localhost root update
+
+insert into t7 (id,a) values (30,10)
+
+*** (1) WAITING FOR THIS LOCK TO BE GRANTED:
+
+RECORD LOCKS space id 231 page no 4 n bits 72 index `ua` of table `test`.`t7` trx id 462308661 lock mode S waiting
+
+*** (2) TRANSACTION:
+
+TRANSACTION 462308660, ACTIVE 43 sec inserting, thread declared inside InnoDB 5000
+mysql tables in use 1, locked 1
+4 lock struct(s), heap size 1184, 3 row lock(s), undo log entries 2
+MySQL thread id 3796960, OS thread handle 0x7f78eac15700, query id 781045192 localhost root update
+
+insert into t7 (id,a) values (40,9)
+
+*** (2) HOLDS THE LOCK(S):
+
+RECORD LOCKS space id 231 page no 4 n bits 72 index `ua` of table `test`.`t7` trx id 462308660 lock_mode X locks rec but not gap
+
+*** (2) WAITING FOR THIS LOCK TO BE GRANTED:
+
+RECORD LOCKS space id 231 page no 4 n bits 72 index `ua` of table `test`.`t7` trx id 462308660 lock_mode X locks gap before rec insert intention waiting
+
+*** WE ROLL BACK TRANSACTION (1)
+```
+
+### 2.4 日志分析
+
+我们从时间线维度分析：
+
+```
++----+----+
+| id | a  |
++----+----+
+|  1 |  1 |
+|  5 |  4 |
+| 25 | 12 |
+| 20 | 20 |
++----+----+
+```
+
+**事务T2** `insert into t7 (id,a) values (26,10)` 语句 insert 成功，持有 a=10 的 X 行锁（**`X locks rec but not gap`**）；
+
+**事务T1** `insert into t7 (id,a) values (30,10)`，因为 T2 的第一条 insert 已经插入 a=10 的记录，事务 T1 的 insert a=10 则发生唯一约束冲突，需要申请对冲突的唯一索引加上 **`S Next-key Lock（也即是 lock mode S waiting）`**；这是一个间隙锁会申请锁住 **`[4,10]`** 之间的 Gap 区域。从这里会发现，即使是 **RC** 事务隔离级别，也同样会存在 **Next-Key Lock** 锁，从而阻塞并发。
+
+**事务T2** `insert into t7 (id,a) values (40,9)`，该语句插入的 a=9 在 事务T1 申请的 Gap 锁 **`[4,10]`** 之间，故 事务T2 的 insert 语句需要等待 事务T1 的 **S-Next-key Lock** 锁释放，在日志中显示 **`lock_mode X locks gap before rec insert intention waiting`**。
+
+## 三、总结 
+
+本文案例和知识点一方面从官方文档获取，另一方面是根据何登成和姜承尧两位 MySQL 技术大牛的技术分享整理，算是站在巨人的肩膀上的学习总结。在研究分析死锁案例的过程中，insert 的意向锁 和 Gap 锁这种类型的锁是比较难分析的，相信通过上面的分析总结大家能够学习到 insert 的锁机制，如何加锁和如何进行 insert 方面的死锁分析。
+
+------
