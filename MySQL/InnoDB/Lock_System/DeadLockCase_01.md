@@ -418,7 +418,7 @@ RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` tr
 RECORD LOCKS space id 232 page no 3 n bits 72 index `PRIMARY` of table `test`.`t8` trx id 462308671 lock_mode X locks rec but not gap
 ```
 
-根据官方的介绍，并结合日志，我们可以看到 `insert into t8 values (NULL,1,2);` 在申请一把 **`S Next-key-Lock`** 锁，显示 **`lock mode S waiting`**。这里想给大家说明的是在 InnoDB 日志中如果提示 **`lock mode S /lock mode X`**，其实都是 Gap 锁，如果是行记录锁会提示 **but not gap**，请读者朋友们在自己分析死锁日志的时候注意。
+根据官方的介绍，并结合日志，我们可以看到 `insert into t8 values (NULL,1,2);` 在申请一把 **`S Next-key-Lock`** 锁，显示 **`lock mode S waiting`**。这里想给大家说明的是在 InnoDB 日志中如果提示 **`lock mode S / lock mode X`**，其实都是 Gap 锁，如果是行记录锁会提示 **but not gap**，请读者朋友们在自己分析死锁日志的时候注意。
 
 session1 delete 语句提交之后，session2 的 insert 不要提交，不要提交，不要提交。再次查看 `innodb engine status`，事务相关日志显示如下：
 
@@ -514,11 +514,11 @@ RECORD LOCKS space id 232 page no 4 n bits 72 index `ub` of table `test`.`t8` tr
 
 分析至此，对于并发 insert 造成唯一键冲突的时候 insert 的加锁策略是:
 
-**`第一阶段 唯一性约束检查，先申请 LOCK_S + LOCK_ORDINARY`**
+**`第一阶段 为唯一性约束检查，先申请 LOCK_S + LOCK_ORDINARY`**
 
 **`第二阶段 获取阶段一的锁并且成功执行 insert 语句`**
 
-**`插入的位置有 Gap 锁：LOCK_INSERT_INTENTION，为了防止其他 insert 唯一键冲突`**
+**`插入的位置有 Gap 锁：LOCK_INSERT_INTENTION`**
 
 **`新数据插入：LOCK_X + LOCK_REC_NOT_GAP`**
 
