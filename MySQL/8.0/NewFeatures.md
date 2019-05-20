@@ -385,9 +385,14 @@ Thank you for using MySQL !
 # MySQL 5.7 新功能列表
 
 There are over 150 new features in MySQL 5.7.
+
 The MySQL manual is very good, but verbose. This is a list of new features in short bullet form. I have tried very hard to make sure each feature is only mentioned once. So InnoDB native partitioning could be mentioned under either InnoDB or partitioning.
-#MySQL5.7相比MySQL5.6更新150多个新功能
-Replication
+
+> **`MySQL5.7 相比 MySQL5.6 更新 150 多个新功能`**
+
+## Replication
+
+```
 1. Multi source replication [1]
 2. Online GTID migration path [1 2 3]
 3. Improved semi-sync performance [1 2]
@@ -413,7 +418,11 @@ Replication
 23. Defaults change: binlog_gtid_simple_recovery=1
 24. Defaults change: binlog_error_action=ABORT_SERVER
 25. Defaults change: slave_net_timeout=60
-InnoDB
+```
+
+## InnoDB
+
+```
 1. Online buffer pool resize [1]
 2. Improved crash recovery performance [1]
 3. Improved read-only transaction scalability [1 23 4]
@@ -458,7 +467,11 @@ InnoDB
 42. Defaults change: innodb_strict_mode=1
 43. Defaults change: innodb_checksum_algorithm=crc32
 44. Defaults change: innodb_default_row_format=DYNAMIC
-Optimizer
+```
+
+## Optimizer
+
+```
 1. Improved optimizer cost model, leading to more consistently better query plans [1 2 3 4]
 2. Optimizer cost constants are now configurable on a global or per engine basis [1 2]
 3. Query parser has been refactored and improved [1]
@@ -482,7 +495,11 @@ Optimizer
 21. Defaults change: sql_mode=ONLY_FULL_GROUP_BY, STRICT_TRANS_TABLES, NO_ZERO_IN_DATE, NO_ZERO_DATE, ERROR_FOR_DIVISION_BY_ZERO, NO_AUTO_CREATE_USER, NO_ENGINE_SUBSTITUTION
 22. Defaults change: optimizer_switch=condition_fanout_filter=on, derived_merge=on
 23. Defaults change: EXTENDED and PARTITIONSkeywords for EXPLAIN enabled by default
-Security
+```
+
+## Security
+
+```
 1. Username size increased to 32 characters [1]
 2. Support for IF [NOT] EXISTS clause in CREATE/DROP USER [1]
 3. Server option to require secure transport [1]
@@ -501,7 +518,11 @@ Security
 16. Ability to create utility users for stored programs that can not login [1]
 17. mysql.user.password field renamed as authentication_string to better describe its current usage.
 18. Support for tablespace encryption [1]
-Performance Schema
+```
+
+## Performance Schema
+
+```
 1. Scalable memory allocation [1]
 2. Overhead has been reduced in client connect/disconnect phases
 3. Memory footprint has been reduced
@@ -517,26 +538,46 @@ Performance Schema
 13. SX-lock and rw_lock instrumentation
 14. Thread status and variables
 15. Defaults change: performance-schema-consumer-events_statements_history=ON
-GIS
+```
+
+## GIS
+
+```
 1. InnoDB supports indexing of spatial datatypes [1]
 2. Consistent naming scheme for GIS functions [1]
 3. GIS has been refactored internally and is now based on Boost Geometry [1]
 4. Geohash functions [1 2]
 5. GeoJSON functions [1 2]
 6. Functions: ST_Distance_Sphere, ST_MakeEnvelope, ST_IsValid, ST_Validate, ST_Simplify, ST_Buffer and ST_IsSimple [1 2]
-Triggers
+```
+
+## Triggers
+
+```
 1. Multiple triggers per event per table [1]
 2. BEFORE Triggers are not processed for NOT NULL columns [1]
-Partitioning
+```
+
+## Partitioning
+
+```
 1. Index condition pushdown optimization now supported
 2. HANDLER command is now supported
 3. WITHOUT VALIDATION option now supported for ALTER TABLE ... EXCHANGE PARTITION
 4. Support for Transportable Tablespaces
 5. Partitioning is now storage-engine native for InnoDB
-SYS (new)
+```
+
+## SYS (new)
+
+```
 1. SYS schema bundled by default [1 2]
 2. 100 new views, 21 new stored functions and 26 new stored procedures to help understand and interact with Performance Schema and Information Schema [1]
-JSON (new)
+```
+
+## JSON (new)
+
+```
 1. Native JSON Data Type [1]
 2. JSON Comparator
 3. Short-hand JSON_EXTRACT operator (field->"json_path") [1]
@@ -545,7 +586,11 @@ JSON (new)
 6. Functions: JSON_CONTAINS, JSON_CONTAINS_PATH, JSON_EXTRACT, JSON_KEYS, JSON_SEARCH for searching JSON values [1]
 7. Functions: JSON_ARRAY_APPEND, JSON_ARRAY_INSERT, JSON_INSERT, JSON_QUOTE, JSON_REMOVE, JSON_REPLACE, JSON_UNSET, JSON_UNQUOTE to modify JSON values [1]
 8. Functions: JSON_DEPTH, JSON_LENGTH, JSON_TYPE, JSON_VALID to return JSON value attributes [1]
-Client Programs
+```
+
+## Client Programs
+
+```
 1. New mysqlpump utility [1]
 2. The mysql client now supports Ctrl+C to clear statement buffer
 3. rewrite-db option added to mysqlbinlog [1 2]
@@ -559,18 +604,30 @@ Client Programs
 11. Client Side Protocol Tracing
 12. Client API method to reset connection
 13. New MySQL Shell (mysqlsh) (separate download)
-libmysqlclient
+```
+
+## libmysqlclient
+
+```
 1. Restricted export functions to documented MySQL C API
 2. Added pkg-config support
 3. Removed _r symlinks
 4. Changed so version to 20 (from 18)
-Building
+```
+
+## Building
+
+```
 1. Compiler switched to GCC on Solaris
 2. MySQL now compiles with Bison 3 (* change also backported)
 3. CMake now used to compile on all platforms
 4. Unneeded CMake checks have been removed (and unused macros removed from source files)
 5. Build support for gcc, clang and MS Studio
-Misc
+```
+
+## Misc
+
+```
 1. Server new connection throughput improved considerably [1]
 2. mysql_install_db replaced by mysqld --initialize [1]
 3. Native support for syslog [1 2]
@@ -600,6 +657,7 @@ Misc
 27. Removal of ambiguous YEAR(2) datatype
 28. Defaults change: log_warnings=2
 29. Defaults change: table_open_cache_instanc
+```
 
 转自：[博客](http://www.thecompletelistoffeatures.com/)
 
