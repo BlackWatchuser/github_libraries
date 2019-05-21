@@ -184,117 +184,94 @@ MySQL / InnoDB 定义的 4 种隔离级别：
 
 **`如何保证两次当前读返回一致的记录，那就需要在第一次当前读与第二次当前读之间，其他的事务不会插入新的满足条件的记录并提交`**。为了实现这个功能，GAP 锁应运而生。
 
-如图中所示，有哪些位置可以插入新的满足条件的项（id = 10），考虑到 B+ 树索引的有序性，满足条件的项一定是连续存放的。记录 [6,c] 之前，不会插入 id=10 的记录；[6,c] 与 [10,b] 间可以插入[10,aa]；[10,b] 与 [10,d] 间，可以插入新的 [10,bb]，[10,c] 等；[10,d] 与 [11,f] 间可以插入满足条件的 [10,e]，[10,z] 等；而 [11,f] 之后也不会插入满足条件的记录。因此，为了保证 [6,c] 与 [10,b] 间，[10,b] 与 [10,d] 间，[10,d] 与 [11,f] 不会插入新的满足条件的记录，MySQL 选择了用 GAP 锁，将这三个 GAP 给锁起来。
+如图中所示，有哪些位置可以插入新的满足条件的项（id = 10），考虑到 B+ 树索引的有序性，满足条件的项一定是连续存放的。**`记录 [6,c] 之前，不会插入 id=10 的记录；[6,c] 与 [10,b] 间可以插入 [10,aa]；[10,b] 与 [10,d] 间，可以插入新的 [10,bb]，[10,c] 等；[10,d] 与 [11,f] 间可以插入满足条件的 [10,e]，[10,z] 等；而 [11,f] 之后也不会插入满足条件的记录`**。因此，为了保证 [6,c] 与 [10,b] 间，[10,b] 与 [10,d] 间，[10,d] 与 [11,f] 不会插入新的满足条件的记录，MySQL 选择了用 GAP 锁，将这三个 GAP 给锁起来。
 
-Insert操作，如insert [10,aa]，首先会定位到[6,c]与[10,b]间，然后在插入前，会检查这个GAP是否已经被锁上，如果被锁上，则Insert不能插入记录。因此，通过第一遍的当前读，不仅将满足条件的记录锁上 (X锁)，与组合三类似。同时还是增加3把GAP锁，将可能插入满足条件记录的3个GAP给锁上，保证后续的Insert不能插入新的id=10的记录，也就杜绝了同一事务的第二次当前读，出现幻象的情况。
+**`INSERT 操作，如 insert [10,aa]，首先会定位到 [6,c] 与 [10,b] 间，然后在插入前，会检查这个 GAP 是否已经被锁上，如果被锁上，则 insert 不能插入记录`**。因此，通过第一遍的当前读，不仅将满足条件的记录锁上（X 锁），与组合三类似。同时还是增加 3 把 GAP 锁，将可能插入满足条件记录的 3 个 GAP 给锁上，保证后续的 insert 不能插入新的 id=10 的记录，也就杜绝了同一事务的第二次当前读，出现幻象的情况。
 
- 
+有心的朋友看到这儿，可以会问：既然防止幻读，需要靠 GAP 锁的保护，为什么组合五、组合六，也是 RR 隔离级别，却不需要加 GAP 锁呢？
 
-有心的朋友看到这儿，可以会问：既然防止幻读，需要靠GAP锁的保护，为什么组合五、组合六，也是RR隔离级别，却不需要加GAP锁呢？
+首先，这是一个好问题。其次，回答这个问题，也很简单。GAP 锁的目的，是为了防止同一事务的两次当前读，出现幻读的情况。而 **`组合五，id 是主键；组合六，id 是 unique 键，都能够保证唯一性。一个等值查询，最多只能返回一条记录，而且新的相同取值的记录，一定不会在新插入进来，因此也就避免了 GAP 锁的使用`**。其实，针对此问题，还有一个更深入的问题：如果组合五、组合六下，针对 SQL：`select * from t1 where id = 10 for update;` 第一次查询，没有找到满足查询条件的记录，那么 GAP 锁是否还能够省略？此问题留给大家思考。
 
- 
-
-首先，这是一个好问题。其次，回答这个问题，也很简单。GAP锁的目的，是为了防止同一事务的两次当前读，出现幻读的情况。而组合五，id是主键；组合六，id是unique键，都能够保证唯一性。一个等值查询，最多只能返回一条记录，而且新的相同取值的记录，一定不会在新插入进来，因此也就避免了GAP锁的使用。其实，针对此问题，还有一个更深入的问题：如果组合五、组合六下，针对SQL：select * from t1 where id = 10 for update; 第一次查询，没有找到满足查询条件的记录，那么GAP锁是否还能够省略？此问题留给大家思考。
-
- 
-
-结论：Repeatable Read隔离级别下，id列上有一个非唯一索引，对应SQL：delete from t1 where id = 10; 首先，通过id索引定位到第一条满足查询条件的记录，加记录上的X锁，加GAP上的GAP锁，然后加主键聚簇索引上的记录X锁，然后返回；然后读取下一条，重复进行。直至进行到第一条不满足条件的记录[11,f]，此时，不需要加记录X锁，但是仍旧需要加GAP锁，最后返回结束。
-
- 
+结论：**Repeatable Read** 隔离级别下，id 列上有一个非唯一索引，对应 SQL：`delete from t1 where id = 10;` **`首先，通过 id 索引定位到第一条满足查询条件的记录，加记录上的 X 锁，加 GAP 上的 GAP 锁，然后加主键聚簇索引上的记录 X 锁，然后返回；然后读取下一条，重复进行。直至进行到第一条不满足条件的记录 [11,f]，此时，不需要加记录 X 锁，但是仍旧需要加 GAP 锁，最后返回结束`**。
 
 ### 组合八：id无索引+RR
- 
 
-组合八，Repeatable Read隔离级别下的最后一种情况，id列上没有索引。此时SQL：delete from t1 where id = 10; 没有其他的路径可以选择，只能进行全表扫描。最终的加锁情况，如下图所示：
+组合八，**Repeatable Read** 隔离级别下的最后一种情况，id 列上没有索引。此时 SQL：`delete from t1 where id = 10;` 没有其他的路径可以选择，只能进行全表扫描。最终的加锁情况，如下图所示：
 
-id 无索引+rr
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/COL_RR_20131213.jpg "id 无索引+rr")
 
-如图，这是一个很恐怖的现象。首先，聚簇索引上的所有记录，都被加上了X锁。其次，聚簇索引每条记录间的间隙(GAP)，也同时被加上了GAP锁。这个示例表，只有6条记录，一共需要6个记录锁，7个GAP锁。试想，如果表上有1000万条记录呢？
+如图，这是一个很恐怖的现象。**`首先，聚簇索引上的所有记录，都被加上了 X 锁。其次，聚簇索引每条记录间的间隙（GAP），也同时被加上了 GAP 锁`**。这个示例表，只有 6 条记录，一共需要 6 个记录锁，7 个 GAP 锁。试想，如果表上有 1000 万条记录呢？
 
- 
+**`在这种情况下，这个表上，除了不加锁的快照读，其他任何加锁的并发 SQL，均不能执行，不能更新，不能删除，不能插入，全表被锁死`**。
 
-在这种情况下，这个表上，除了不加锁的快照度，其他任何加锁的并发SQL，均不能执行，不能更新，不能删除，不能插入，全表被锁死。
+当然，跟组合四：**`[id无索引, Read Committed]`** 类似，这个情况下，MySQL 也做了一些优化，就是所谓的 **`semi-consistent read`**。`semi-consistent read` 开启的情况下，对于不满足查询条件的记录，MySQL 会提前放锁。针对上面的这个用例，就是除了记录 [d,10]，[g,10] 之外，所有的记录锁都会被释放，同时不加 GAP 锁。**`semi-consistent read` 如何触发：要么是 `Read Committed` 隔离级别；要么是 `Repeatable Read` 隔离级别，同时设置了 `innodb_locks_unsafe_for_binlog` 参数**。更详细的关于 semi-consistent read 的介绍，可参考我之前的一篇博客：[MySQL+InnoDB semi-consitent read 原理及实现分析](http://hedengcheng.com/?p=220)。
 
- 
-
-当然，跟组合四：[id无索引, Read Committed]类似，这个情况下，MySQL也做了一些优化，就是所谓的semi-consistent read。semi-consistent read开启的情况下，对于不满足查询条件的记录，MySQL会提前放锁。针对上面的这个用例，就是除了记录[d,10]，[g,10]之外，所有的记录锁都会被释放，同时不加GAP锁。semi-consistent read如何触发：要么是read committed隔离级别；要么是Repeatable Read隔离级别，同时设置了 innodb_locks_unsafe_for_binlog 参数。更详细的关于semi-consistent read的介绍，可参考我之前的一篇博客：MySQL+InnoDB semi-consitent read原理及实现分析 。
-
- 
-
-结论：在Repeatable Read隔离级别下，如果进行全表扫描的当前读，那么会锁上表中的所有记录，同时会锁上聚簇索引内的所有GAP，杜绝所有的并发 更新/删除/插入 操作。当然，也可以通过触发semi-consistent read，来缓解加锁开销与并发影响，但是semi-consistent read本身也会带来其他问题，不建议使用。
-
- 
+结论：在 Repeatable Read 隔离级别下，如果进行全表扫描的当前读，那么会锁上表中的所有记录，同时会锁上聚簇索引内的所有 GAP，杜绝所有的并发 更新/删除/插入 操作。当然，也可以通过触发 semi-consistent read，来缓解加锁开销与并发影响，但是 semi-consistent read 本身也会带来其他问题，不建议使用。
 
 ### 组合九：Serializable
- 
 
-针对前面提到的简单的SQL，最后一个情况：Serializable隔离级别。对于SQL2：delete from t1 where id = 10; 来说，Serializable隔离级别与Repeatable Read隔离级别完全一致，因此不做介绍。
+针对前面提到的简单的 SQL，最后一个情况：Serializable 隔离级别。对于 SQL2：`delete from t1 where id = 10;` 来说，Serializable 隔离级别与 Repeatable Read 隔离级别完全一致，因此不做介绍。
 
- 
+Serializable 隔离级别，影响的是 SQL1：`select * from t1 where id = 10;` 这条 SQL，在 RC，RR 隔离级别下，都是快照读，不加锁。但是在 Serializable 隔离级别，SQL1 会加读锁，也就是说快照读不复存在，MVCC 并发控制降级为 Lock-Based CC。
 
-Serializable隔离级别，影响的是SQL1：select * from t1 where id = 10; 这条SQL，在RC，RR隔离级别下，都是快照读，不加锁。但是在Serializable隔离级别，SQL1会加读锁，也就是说快照读不复存在，MVCC并发控制降级为Lock-Based CC。
-
- 
-
-结论：在MySQL/InnoDB中，所谓的读不加锁，并不适用于所有的情况，而是隔离级别相关的。Serializable隔离级别，读不加锁就不再成立，所有的读操作，都是当前读。
-
- 
+结论：在 MySQL/InnoDB 中，所谓的读不加锁，并不适用于所有的情况，而是隔离级别相关的。Serializable 隔离级别，读不加锁就不再成立，所有的读操作，都是当前读。
 
 ## 一条复杂的 SQL
  
-写到这里，其实MySQL的加锁实现也已经介绍的八八九九。只要将本文上面的分析思路，大部分的SQL，都能分析出其会加哪些锁。而这里，再来看一个稍微复杂点的SQL，用于说明MySQL加锁的另外一个逻辑。SQL用例如下：
+写到这里，其实 MySQL 的加锁实现也已经介绍的八八九九。只要将本文上面的分析思路，大部分的 SQL，都能分析出其会加哪些锁。而这里，再来看一个稍微复杂点的 SQL，用于说明 MySQL 加锁的另外一个逻辑。SQL 用例如下：
 
-复杂SQL
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/complex_sql_rr_20131213.jpg "复杂SQL")
 
-如图中的SQL，会加什么锁？假定在Repeatable Read隔离级别下 (Read Committed隔离级别下的加锁情况，留给读者分析。)，同时，假设SQL走的是idx_t1_pu索引。
+如图中的 SQL，会加什么锁？假定在 **Repeatable Read** 隔离级别下（**Read Committed** 隔离级别下的加锁情况，留给读者分析）。同时，假设 SQL 走的是 **idx_t1_pu** 索引。
 
- 
+在详细分析这条 SQL 的加锁情况前，还需要有一个知识储备，那就是一个 SQL 中的 where 条件如何拆分？具体的介绍，建议阅读我之前的一篇文章：[SQL 中的 where 条件，在数据库中提取与应用浅析](http://hedengcheng.com/?p=577)。在这里，我直接给出分析后的结果：
 
-在详细分析这条SQL的加锁情况前，还需要有一个知识储备，那就是一个SQL中的where条件如何拆分？具体的介绍，建议阅读我之前的一篇文章：SQL中的where条件，在数据库中提取与应用浅析 。在这里，我直接给出分析后的结果：
+* **`Index Key`**：`pubtime > 1 and puptime < 20`。此条件，用于确定 SQL 在 **idx_t1_pu** 索引上的查询范围。
 
- 
+* **`Index Filter`**：`userid = 'hdc'`。此条件，可以在 **idx_t1_pu** 索引上进行过滤，但不属于 **`Index Key`**。
 
-Index key：pubtime > 1 and puptime < 20。此条件，用于确定SQL在idx_t1_pu索引上的查询范围。
-Index Filter：userid = ‘hdc’ 。此条件，可以在idx_t1_pu索引上进行过滤，但不属于Index Key。
-Table Filter：comment is not NULL。此条件，在idx_t1_pu索引上无法过滤，只能在聚簇索引上过滤。
- 
+* **`Table Filter`**：`comment is not NULL`。此条件，在 **idx_t1_pu** 索引上无法过滤，只能在聚簇索引上过滤。
 
-在分析出SQL where条件的构成之后，再来看看这条SQL的加锁情况 (RR隔离级别)，如下图所示：
+在分析出 SQL where 条件的构成之后，再来看看这条 SQL 的加锁情况（**RR** 隔离级别），如下图所示：
 
-SQL加锁
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/complex_sql_rr_lock_20131213.jpg "SQL 加锁")
 
-从图中可以看出，在Repeatable Read隔离级别下，由Index Key所确定的范围，被加上了GAP锁；Index Filter锁给定的条件 (userid = ‘hdc’)何时过滤，视MySQL的版本而定，在MySQL 5.6版本之前，不支持Index Condition Pushdown(ICP)，因此Index Filter在MySQL Server层过滤，在5.6后支持了Index Condition Pushdown，则在index上过滤。若不支持ICP，不满足Index Filter的记录，也需要加上记录X锁，若支持ICP，则不满足Index Filter的记录，无需加记录X锁 (图中，用红色箭头标出的X锁，是否要加，视是否支持ICP而定)；而Table Filter对应的过滤条件，则在聚簇索引中读取后，在MySQL Server层面过滤，因此聚簇索引上也需要X锁。最后，选取出了一条满足条件的记录[8,hdc,d,5,good]，但是加锁的数量，要远远大于满足条件的记录数量。
+从图中可以看出，在 **Repeatable Read** 隔离级别下，由 **`Index Key`** 所确定的范围，被加上了 GAP 锁；**`Index Filter`** 锁给定的条件（userid = 'hdc'）何时过滤，视 MySQL 的版本而定，在 MySQL 5.6 版本之前，不支持 **`Index Condition Pushdown(ICP)`**，因此 Index Filter 在 MySQL Server 层过滤，在 5.6 后支持了 Index Condition Pushdown，则在 index 上过滤。**`若不支持 ICP，不满足 Index Filter 的记录，也需要加上记录 X 锁，若支持 ICP，则不满足 Index Filter 的记录，无需加记录 X 锁`**（图中，用红色箭头标出的 X 锁，是否要加，视是否支持 ICP 而定）；而 **`Table Filter`** 对应的过滤条件，则**`在聚簇索引中读取后，在 MySQL Server 层面过滤，因此聚簇索引上也需要 X 锁`**。最后，选取出了一条满足条件的记录 [8,hdc,d,5,good]，但是加锁的数量，要远远大于满足条件的记录数量。
 
-结论：在Repeatable Read隔离级别下，针对一个复杂的SQL，首先需要提取其where条件。Index Key确定的范围，需要加上GAP锁；Index Filter过滤条件，视MySQL版本是否支持ICP，若支持ICP，则不满足Index Filter的记录，不加X锁，否则需要X锁；Table Filter过滤条件，无论是否满足，都需要加X锁。
+结论：在 **Repeatable Read** 隔离级别下，**`针对一个复杂的 SQL，首先需要提取其 where 条件。Index Key 确定的范围，需要加上 GAP 锁；Index Filter 过滤条件，视 MySQL 版本是否支持 ICP，若支持 ICP，则不满足 Index Filter 的记录，不加 X 锁，否则需要 X 锁；Table Filter 过滤条件，无论是否满足，都需要加 X 锁`**。
 
 ## 死锁原理与分析
 
-本文前面的部分，基本上已经涵盖了MySQL/InnoDB所有的加锁规则。深入理解MySQL如何加锁，有两个比较重要的作用：
+本文前面的部分，基本上已经涵盖了 MySQL / InnoDB 所有的加锁规则。深入理解 MySQL 如何加锁，有两个比较重要的作用：
 
-可以根据MySQL的加锁规则，写出不会发生死锁的SQL；
-可以根据MySQL的加锁规则，定位出线上产生死锁的原因；
-下面，来看看两个死锁的例子 (一个是两个Session的两条SQL产生死锁；另一个是两个Session的一条SQL，产生死锁)：
+* 可以根据 MySQL 的加锁规则，写出不会发生死锁的 SQL；
 
-死锁用例
+* 可以根据 MySQL 的加锁规则，定位出线上产生死锁的原因；
 
-死锁用例2
+下面，来看看两个死锁的例子（一个是两个 Session 的两条 SQL 产生死锁；另一个是两个 Session 的一条 SQL，产生死锁）：
 
-上面的两个死锁用例。第一个非常好理解，也是最常见的死锁，每个事务执行两条SQL，分别持有了一把锁，然后加另一把锁，产生死锁。
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/deadlock_01_20131213.jpg "死锁用例")
 
-第二个用例，虽然每个Session都只有一条语句，仍旧会产生死锁。要分析这个死锁，首先必须用到本文前面提到的MySQL加锁的规则。针对Session 1，从name索引出发，读到的[hdc, 1]，[hdc, 6]均满足条件，不仅会加name索引上的记录X锁，而且会加聚簇索引上的记录X锁，加锁顺序为先[1,hdc,100]，后[6,hdc,10]。而Session 2，从pubtime索引出发，[10,6],[100,1]均满足过滤条件，同样也会加聚簇索引上的记录X锁，加锁顺序为[6,hdc,10]，后[1,hdc,100]。发现没有，跟Session 1的加锁顺序正好相反，如果两个Session恰好都持有了第一把锁，请求加第二把锁，死锁就发生了。
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/deadlock_02_20131213.jpg "死锁用例2")
 
-结论：死锁的发生与否，并不在于事务中有多少条SQL语句，死锁的关键在于：两个(或以上)的Session加锁的顺序不一致。而使用本文上面提到的，分析MySQL每条SQL语句的加锁规则，分析出每条语句的加锁顺序，然后检查多个并发SQL间是否存在以相反的顺序加锁的情况，就可以分析出各种潜在的死锁情况，也可以分析出线上死锁发生的原因。
+上面的两个死锁用例。第一个非常好理解，也是 **`最常见的死锁，每个事务执行两条 SQL，分别持有了一把锁，然后加另一把锁，产生死锁`**。
+
+第二个用例，虽然每个 Session 都只有一条语句，仍旧会产生死锁。要分析这个死锁，首先必须用到本文前面提到的 MySQL 加锁的规则。针对 **Session 1**，从 name 索引出发，读到的 **[hdc, 1]，[hdc, 6]** 均满足条件，不仅会加 name 索引上的记录 X 锁，而且会加聚簇索引上的记录 X 锁，加锁顺序为先 **[1,hdc,100]**，后 **[6,hdc,10]**。而 **Session 2**，从 pubtime 索引出发，**[10,6]，[100,1]** 均满足过滤条件，同样也会加聚簇索引上的记录 X 锁，加锁顺序为 **[6,hdc,10]**，后 **[1,hdc,100]**。发现没有，跟 **Session 1** 的加锁顺序正好相反，如果两个 Session 恰好都持有了第一把锁，请求加第二把锁，死锁就发生了。
+
+结论：**`死锁的发生与否，并不在于事务中有多少条 SQL 语句，死锁的关键在于：两个(或以上)的 Session 加锁的顺序不一致`**。而使用本文上面提到的，分析 MySQL 每条 SQL 语句的加锁规则，分析出每条语句的加锁顺序，然后检查多个并发 SQL 间是否存在以相反的顺序加锁的情况，就可以分析出各种潜在的死锁情况，也可以分析出线上死锁发生的原因。
 
 ## 总结
 
-写到这儿，本文也告一段落，做一个简单的总结，要做的完全掌握MySQL/InnoDB的加锁规则，甚至是其他任何数据库的加锁规则，需要具备以下的一些知识点：
+写到这儿，本文也告一段落，做一个简单的总结，要做的完全掌握 MySQL / InnoDB 的加锁规则，甚至是其他任何数据库的加锁规则，需要具备以下的一些知识点：
 
-了解数据库的一些基本理论知识：数据的存储格式 (堆组织表 vs 聚簇索引表)；并发控制协议 (MVCC vs Lock-Based CC)；Two-Phase Locking；数据库的隔离级别定义 (Isolation Level)；
+* 了解数据库的一些基本理论知识：数据的存储格式（堆组织表 vs 聚簇索引表）；并发控制协议（MVCC vs Lock-Based CC）；Two-Phase Locking；数据库的隔离级别定义（Isolation Level）；
 
-了解SQL本身的执行计划 (主键扫描 vs 唯一键扫描 vs 范围扫描 vs 全表扫描)；
+* 了解 SQL 本身的执行计划（主键扫描 vs 唯一键扫描 vs 范围扫描 vs 全表扫描）；
 
-了解数据库本身的一些实现细节 (过滤条件提取；Index Condition Pushdown；Semi-Consistent Read)；
+* 了解数据库本身的一些实现细节（过滤条件提取；Index Condition Pushdown；Semi-Consistent Read）；
 
-了解死锁产生的原因及分析的方法 (加锁顺序不一致；分析每个SQL的加锁顺序)
+* 了解死锁产生的原因及分析的方法（加锁顺序不一致；分析每个 SQL 的加锁顺序）；
 
-有了这些知识点，再加上适当的实战经验，全面掌控MySQL/InnoDB的加锁规则，当不在话下。
+有了这些知识点，再加上适当的实战经验，全面掌控 MySQL / InnoDB 的加锁规则，当不在话下。
+
+------
