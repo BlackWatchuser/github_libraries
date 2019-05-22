@@ -351,7 +351,7 @@ insert into t8 values (NULL,1,2)
 | :- | :- |
 | begin; |  |
 | delete from t8 where b = 1; | begin; |
-|  | insert into t8 values (NULL,1); |
+|  | insert into t8 values (NULL,1,2); |
 | commit; |  |
 |  | update t8 set c=13 where b=1; |
 
