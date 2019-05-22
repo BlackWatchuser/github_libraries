@@ -28,7 +28,9 @@ TiDB 具备如下特性：
 
     **`强一致 - Raft Leader 提供服务 - Multi Raft Group（Region，管理一段范围[Range]数据）- 各个 Group 的 Leader 可以根据负载被调度到不同的机器上（负载均衡） - 性能 - 热Region仍存在性能瓶颈（raft store + raft apply）`**
 
-    **`数据安全 - Raft 多副本 | 自动故障转移 - Raft 的选举机制 - 心跳机制/统计信息 - PD 组件`**
+    **`存储层：数据安全 - Raft 多副本 | 自动故障转移 - Raft 的选举机制 - 心跳机制/统计信息 - PD 组件 | 计算层：无状态（上层添加负载均衡组件）`**
+
+    **`PD（etcd / raft） 在选举的过程中无法对外提供服务，这个时间大约是3秒钟。`**
 
 * **`一站式 HTAP 解决方案`**
 
@@ -52,18 +54,35 @@ TiDB 具备如下特性：
 
 5. 乐观事务锁模型：业务逻辑导致冲突较多时，性能会急剧下降；
 
-6. 因为是分布式集群（节点间交互存在网络开销），故单个请求的响应时间是不如 MySQL 这种单机数据库的；
+6. 因为是分布式集群（节点间交互存在网络开销），故单个请求的响应时间是不如 MySQL 这种单机数据库（本地调用）的；
 
 ## 二、TiDB 的架构
 
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/TiDB/TiDBArchitecture_20190522.png)
 
+### TiDB Server
 
+**`TiDB Server 负责接收 SQL 请求，处理 SQL 相关的逻辑，并通过 PD 找到存储计算所需数据的 TiKV 地址，与 TiKV 交互获取数据，最终返回结果。TiDB Server 是无状态的，其本身并不存储数据，只负责计算，可以无限水平扩展`**，可以通过负载均衡组件（如LVS、HAProxy 或 F5）对外提供统一的接入地址。
+
+### PD Server
+
+**`Placement Driver (简称 PD) 是整个集群的管理模块，其主要工作有三个：一是存储集群的元信息（某个 Key 存储在哪个 TiKV 节点）；二是对 TiKV 集群进行调度和负载均衡（如数据的迁移、Raft group leader 的迁移等）；三是分配全局唯一且递增的事务 ID`**。
+
+PD 通过 Raft 协议保证数据的安全性。Raft 的 leader server 负责处理所有操作，其余的 PD server 仅用于保证高可用。建议部署奇数个 PD 节点。
+
+### TiKV Server
+
+TiKV Server 负责存储数据，从外部看 **`TiKV 是一个分布式的提供事务的 Key-Value 存储引擎。存储数据的基本单位是 Region，每个 Region 负责存储一个 Key Range（从 StartKey 到 EndKey 的左闭右开区间）的数据，每个 TiKV 节点会负责多个 Region。TiKV 使用 Raft 协议做复制，保持数据的一致性和容灾。副本以 Region 为单位进行管理，不同节点上的多个 Region 构成一个 Raft Group，互为副本。数据在多个 TiKV 之间的负载均衡由 PD 调度，这里也是以 Region 为单位进行调度`**。
+
+### TiSpark
+
+TiSpark 作为 TiDB 中解决用户复杂 OLAP 需求的主要组件，将 **`Spark SQL 直接运行在 TiDB 存储层上`**，同时融合 TiKV 分布式集群的优势，并融入大数据社区生态。至此，TiDB 可以通过一套系统，同时支持 OLTP 与 OLAP，免除用户数据同步的烦恼。
 
 ## 三、存储层的区别
 
-
-
 ### 3.1 MySQL - B+ Tree
+
+
 
 ### 3.2 TiKV - LSM Tree
 
