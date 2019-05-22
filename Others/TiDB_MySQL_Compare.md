@@ -80,11 +80,47 @@ TiSpark 作为 TiDB 中解决用户复杂 OLAP 需求的主要组件，将 **`Sp
 
 ## 三、存储层的区别
 
+> **`写入效率相对会慢些，但优化了读取效率 | 对写入性能有很大优化，但读取效率会下降（其实还有写放大的问题）`**
+
 ### 3.1 MySQL - B+ Tree
 
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/B_Tree_Structure_20130110.png)
+
+### 3.2 TiKV - Raft + RocksDB - LSM Tree
+
+#### RocksDB
+
+[\[RocksDB\]](https://rocksdb.org.cn/doc/Home.html) | [\[GitHub\]](https://github.com/facebook/rocksdb/wiki)
+
+RocksDB 是一种 **`可以存储任意二进制 KV 数据的嵌入式存储`**。RocksDB 按顺序组织所有数据，他们的通用操作是 Get(key), Put(key), Delete(Key) 以及 NewIterator()。
+
+**`RocksDB 有三种基本的数据结构：mentable，sstfile 以及 logfile`**。
+
+* **`mentable`** 是一种内存数据结构 —— 所有写入请求都会进入 mentable，然后选择性进入logfile。
+
+* **`logfile`** 是一种有序写存储结构。当 mentable 被填满的时候，其会被刷到 sstfile 文件并存储起来，然后相关的 logfile 会在之后被安全地删除。
+
+* **`sstfile`** 内的数据都是排序好的，以便于根据 key 快速搜索。
+
+#### LSM Tree
 
 
-### 3.2 TiKV - LSM Tree
+
+三、LSM Tree的历史由来
+
+LSM Tree的最早概念，诞生于1996年google的“BigTable”论文。后世多种数据库产品对LSM Tree的具体实现，都有一些小的差异。采用LSM Tree作为存储结构的数据库有，Google的LevelDB, Facebook的RockDB(RockDB来源于LevelDB), Cassandra,HBase等。
+
+四、提高写吞吐量的思路
+既然顺序写比起随机写速度更快。那得想办法将数据顺序写。
+
+4.1 一种方式是数据来后，直接顺序落盘
+这拥有很高的写速度。但是当我们想要查寻一个数据的时候，由于存储下的数据本身是无序的（写的值本身无法控制顺序），无法使用任何算法进行优化，只能挨个查询，读取速度是很慢的。
+
+4.2 另一种方式，是保证落盘的数据是顺序写入的同时，还保证这些数据是有序的
+而请求写入的数据本身是无序且不可预测的，如何保证落盘的数据是有序的呢？这就需要利用内存访问速度比硬盘快的原理。将写入的请求，先在内存中缓存起来，按一定的有序结构组织，达到一定量后，再写入硬盘，从而使得硬盘顺序写入了有序的数据。提高数据的写入速度同时，方便了后续基于有序数据的查找(有序的数据结构，可以通过二分查找等算法进行进行快速查询，具体查找算法，得看是哪种有序结构)
+
+#### 
+
 
 ## 四、MVCC
 
