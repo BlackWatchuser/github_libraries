@@ -86,6 +86,24 @@ TiSpark 作为 TiDB 中解决用户复杂 OLAP 需求的主要组件，将 **`Sp
 
 ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/B_Tree_Structure_20130110.png)
 
+``` shell
+1. ROOT、NON-LEAF、LEAF(Level 0) Pages；
+
+2. 同层（Level）的页之间通过两个指针形成一个双向链表；
+
+3. 中间节点保存的 KV：Key → the minimum key | Value → child_page_number；
+```
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/INDEX_Page_Overview_20130107.png)
+
+``` shell
+1. 记录与记录之间物理上是没有绝对顺序，但通过指针形成了一个单向链表；
+
+2. 每行记录都包含一个，Maximum Transaction ID、undo pointer 和  <= MVCC；
+
+3. Page Directory：slot → 4 - 8 记录，指向记录的offset；
+```
+
 ### 3.2 TiKV - Raft + RocksDB - LSM Tree
 
 #### RocksDB

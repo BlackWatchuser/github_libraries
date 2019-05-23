@@ -10,9 +10,9 @@ The basic structure of the space and each page was described in [`The basics of 
 
 Before diving into physical structures, it's critical to understand that in InnoDB, everything is an index. What does that mean to the physical structure?
 
-1. Every table has a primary key; if the CREATE TABLE does not specify one, the first non-NULL unique key is used, and failing that, a 48-bit hidden "Row ID" field is automatically added to the table structure and used as the primary key. Always add a primary key yourself. The hidden one is useless to you but still costs 6 bytes per row.
+1. **`Every table has a primary key; if the CREATE TABLE does not specify one, the first non-NULL unique key is used, and failing that, a 48-bit hidden "Row ID" field is automatically added to the table structure and used as the primary key`**. Always add a primary key yourself. The hidden one is useless to you but still costs 6 bytes per row.
 
-2. The "row data" (non-PRIMARY KEY fields) are stored in the PRIMARY KEY index structure, which is also called the "clustered key". This index structure is keyed on the PRIMARY KEY fields, and the row data is the value attached to that key (as well as some extra fields for MVCC).
+2. **`The "row data" (non-PRIMARY KEY fields) are stored in the PRIMARY KEY index structure, which is also called the "clustered key"`**. This index structure is keyed on the PRIMARY KEY fields, and the row data is the value attached to that key (as well as some extra fields for MVCC).
 
 3. Secondary keys are stored in an identical index structure, but they are keyed on the KEY fields, and the primary key value (PKV) is attached to that key.
 
@@ -26,17 +26,17 @@ Every index page has an overall structure as follows:
 
 The major sections of the page structure are (not in order):
 
-* The FIL header and trailer: This is typical and common to all page types. One aspect somewhat unique to INDEX pages is that the "previous page" and "next page" pointers in the FIL header point to the previous and next pages at the same level of the index, and in ascending order based on the index's key. This forms a doubly-linked list of all pages at each level. This will be further described in the logical index structure.
+* **`The FIL header and trailer`**: This is typical and common to all page types. One aspect somewhat unique to INDEX pages is that **`the "previous page" and "next page" pointers in the FIL header point to the previous and next pages at the same level of the index, and in ascending order based on the index's key. This forms a doubly-linked list of all pages at each level`**. This will be further described in the logical index structure.
 
-* The FSEG header: As described in Page management in InnoDB space files, the index root page's FSEG header contains pointers to the file segments used by this index. All other index pages' FSEG headers are unused and zero-filled.
+* **`The FSEG header`**: As described in [`Page management in InnoDB space files`](https://blog.jcole.us/2013/01/04/page-management-in-innodb-space-files/), **`the index root page's FSEG header contains pointers to the file segments used by this index. All other index pages' FSEG headers are unused and zero-filled`**.
 
-* The INDEX header: Contains many fields related to INDEX pages and record management. Fully described below.
+* **`The INDEX header`**: Contains many fields related to INDEX pages and record management. Fully described below.
 
-* System records: InnoDB has two system records in each page called infimum and supremum. These records are stored in a fixed location in the page so that they can always be found directly based on byte offset in the page.
+* **`System records`**: **`InnoDB has two system records in each page called infimum and supremum. These records are stored in a fixed location in the page`** so that they can always be found directly based on byte offset in the page.
 
-* User records: The actual data. Every record has a variable-width header and the actual column data itself. The header contains a "next record" pointer which stores the offset to the next record within the page in ascending order, forming a singly-linked list. Details of user record structure will be described in a future post.
+* **`User records`**: The actual data. Every record has **`a variable-width header`** and the actual column data itself. **`The header contains a "next record" pointer which stores the offset to the next record within the page in ascending order, forming a singly-linked list`**. Details of user record structure will be described in a future post.
 
-* The page directory: The page directory grows downwards from the "top" of the page starting at the FIL trailer and contains pointers to some of the records in the page (every 4th to 8th record). Details of the page directory logical structure and its purpose will be described in a future post.
+* **`The page directory`**: **`The page directory grows downwards from the "top" of the page starting at the FIL trailer and contains pointers to some of the records in the page (every 4th to 8th record)`**. Details of the page directory logical structure and its purpose will be described in a future post.
 
 ## The INDEX header
 
@@ -46,35 +46,35 @@ The INDEX header in each INDEX page is fixed-width and has the following structu
 
 The fields stored in this structure are (not in order):
 
-* Index ID: The ID of the index this page belongs to.
+* **`Index ID`**: The ID of the index this page belongs to.
 
-* Format Flag: The format of the records in this page, stored in the high bit (0x8000) of the "Number of Heap Records" field. Two values are possible: COMPACT and REDUNDANT. Described fully below.
+* **`Format Flag`**: The format of the records in this page, stored in the high bit (0x8000) of the "Number of Heap Records" field. **`Two values are possible: COMPACT and REDUNDANT`**. Described fully below.
 
-* Maximum Transaction ID: The maximum transaction ID of any modification to any record in this page.
+* **`Maximum Transaction ID`**: **`The maximum transaction ID of any modification to any record in this page`**.
 
-* Number of Heap Records: The total number of records in the page, including the infimum and supremum system records, and garbage (deleted) records.
+* **`Number of Heap Records`**: **`The total number of records in the page, including the infimum and supremum system records, and garbage (deleted) records`**.
 
-* Number of Records: The number of non-deleted user records in the page.
+* **`Number of Records`**: The number of non-deleted user records in the page.
 
-* Heap Top Position: The byte offset of the "end" of the currently used space. All space between the heap top and the end of the page directory is free space.
+* **`Heap Top Position`**: The byte offset of the "end" of the currently used space. All space between the heap top and the end of the page directory is free space.
 
-* First Garbage Record Offset: A pointer to the first entry in the list of garbage (deleted) records. The list is singly-linked together using the "next record" pointers in each record header. (This is called "free" within InnoDB, but this name is somewhat confusing.)
+* **`First Garbage Record Offset`**: **`A pointer to the first entry in the list of garbage (deleted) records. The list is singly-linked together using the "next record" pointers in each record header`**. (This is called "free" within InnoDB, but this name is somewhat confusing.)
 
-* Garbage Space: The total number of bytes consumed by the deleted records in the garbage record list.
+* **`Garbage Space`**: The total number of bytes consumed by the deleted records in the garbage record list.
 
-* Last Insert Position: The byte offset of the record that was last inserted into the page.
+* **`Last Insert Position`**: The byte offset of the record that was last inserted into the page.
 
-* Page Direction: Three values are currently used for page direction: LEFT, RIGHT, and NO_DIRECTION. This is an indication as to whether this page is experiencing sequential inserts (to the left [lower values] or right [higher values]) or random inserts. At each insert, the record at the last insert position is read and its key is compared to the currently inserted record's key, in order to determine insert direction.
+* **`Page Direction`**: Three values are currently used for page direction: **`LEFT, RIGHT, and NO_DIRECTION`**. This is an indication as to whether this page is experiencing sequential inserts (to `the left [lower values] or right [higher values]`) or random inserts. At each insert, the record at the last insert position is read and its key is compared to the currently inserted record's key, in order to determine insert direction.
 
-* Number of Inserts in Page Direction: Once the page direction is set, any following inserts that don't reset the direction (due to their direction differing) will instead increment this value.
+* **`Number of Inserts in Page Direction`**: Once the page direction is set, any following inserts that don't reset the direction (due to their direction differing) will instead increment this value.
 
-* Number of Directory Slots: The size of the page directory in "slots", which are each 16-bit byte offsets.
+* **`Number of Directory Slots`**: The size of the page directory in "slots", which are each 16-bit byte offsets.
 
-* Page Level: The level of this page in the index. Leaf pages are at level 0, and the level increments up the B+tree from there. In a typical 3-level B+tree, the root will be level 2, some number of internal non-leaf pages will be level 1, and leaf pages will be level 0. This will be discussed in more detail in a future post as it relates to logical structure.
+* **`Page Level`**: The level of this page in the index. Leaf pages are at level 0, and the level increments up the B+tree from there. In a typical 3-level B+tree, the root will be level 2, some number of internal non-leaf pages will be level 1, and leaf pages will be level 0. This will be discussed in more detail in a future post as it relates to logical structure.
 
 ## Record format: redundant versus compact
 
-The COMPACT record format is new in the Barracuda table format, while the REDUNDANT record format is the original one in the Antelope table format (neither of which had a name officially until Barracuda was created). The COMPACT format mostly eliminated information that was redundantly stored in each record and can be obtained from the data dictionary, such as the number of fields, which fields are nullable, and which fields are dynamic length.
+**`The COMPACT record format is new in the Barracuda table format, while the REDUNDANT record format is the original one in the Antelope table format`** (neither of which had a name officially until Barracuda was created). The COMPACT format mostly eliminated information that was redundantly stored in each record and can be obtained from the data dictionary, **`such as the number of fields, which fields are nullable, and which fields are dynamic length`**.
 
 ## An aside on record pointers
 
@@ -84,7 +84,7 @@ Since the "next record" pointer in system and user records is always the first f
 
 ## System records: infimum and supremum
 
-Every INDEX page contains two system records, called infimum and supremum, at fixed locations (offset 99 and offset 112 respectively) within the page, with the following structure:
+**`Every INDEX page contains two system records, called infimum and supremum, at fixed locations (offset 99 and offset 112 respectively) within the page`**, with the following structure:
 
 ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/INDEX_System_Records_20130107.png)
 
@@ -92,11 +92,11 @@ The two system records have a typical record header preceding their location, an
 
 ### The infimum record
 
-The infimum record represents a value lower than any possible key in the page. Its "next record" pointer points to the user record with the lowest key in the page. Infimum serves as a fixed entry point for sequentially scanning user records.
+**`The infimum record represents a value lower than any possible key in the page. Its "next record" pointer points to the user record with the lowest key in the page. Infimum serves as a fixed entry point for sequentially scanning user records`**.
 
 ### The supremum record
 
-The supremum record represents a key higher than any possible key in the page. Its "next record" pointer is always zero (which represents NULL, and is always an invalid position for an actual record, due to the page headers). The "next record" pointer of the user record with the highest key on the page always points to supremum.
+**`The supremum record represents a key higher than any possible key in the page. Its "next record" pointer is always zero`** (which represents NULL, and is always an invalid position for an actual record, due to the page headers). The "next record" pointer of the user record with the highest key on the page always points to supremum.
 
 ## User records
 
@@ -116,7 +116,7 @@ Further, using the "next page" pointer in the INDEX header, it's easy to scan fr
 
 5. If the "next page" pointer points to NULL, exit. If not, follow the "next page" pointer and return to step 2.
 
-Since records are singly-linked rather than doubly-linked, traversing the index in descending order is not as trivial, and will be discussed in a future post.
+**`Since records are singly-linked rather than doubly-linked, traversing the index in descending order is not as trivial`**, and will be discussed in a future post.
 
 ## The page directory
 
@@ -124,7 +124,7 @@ The page directory starts at the FIL trailer and grows "downwards" from there to
 
 ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/INDEX_Page_Directory_20130107.png)
 
-The page directory is simply a dynamically-sized array of 16-bit offset pointers to records within the page. Its purpose will be more fully described in a future post dedicated to the page directory.
+**`The page directory is simply a dynamically-sized array of 16-bit offset pointers to records within the page`**. Its purpose will be more fully described in a future post dedicated to the page directory.
 
 ## Free space
 
