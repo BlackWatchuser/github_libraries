@@ -1,5 +1,7 @@
 # The physical structure of InnoDB index pages
 
+[原文](https://blog.jcole.us/2013/01/07/the-physical-structure-of-innodb-index-pages/)
+
 In [`On learning InnoDB: A journey to the core`](https://blog.jcole.us/2013/01/02/on-learning-innodb-a-journey-to-the-core/), I introduced the [`innodb_diagrams`](http://github.com/jeremycole/innodb_diagrams) project to document the InnoDB internals, which provides the diagrams used in this post. (Note that each image below is linked to a higher resolution version of the same image.)
 
 The basic structure of the space and each page was described in [`The basics of InnoDB space file layout`](https://blog.jcole.us/2013/01/03/the-basics-of-innodb-space-file-layout/), and we'll now take a deeper look into how INDEX pages are physically structured. This will lay the ground work to discuss indexes at a logical (and much higher) level.
