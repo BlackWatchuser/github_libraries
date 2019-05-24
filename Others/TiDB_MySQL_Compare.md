@@ -142,9 +142,18 @@ LSM Tree的最早概念，诞生于1996年google的“BigTable”论文。后世
 
 ## 四、MVCC
 
+MVCC → 多版本并发控制，其相对应的是基于锁的并发控制；
 
+优势：“快照”读不加锁，挺高了系统整体的并发度；
+
+RR | RC 隔离级别下表现形式不同（生成 Read View 的机制不同）；
 
 ### 4.1 MySQL - MVCC - Undo
+
+1. 无论是聚簇索引，还是二级索引，其每条记录都包含了一个 **`DELETED BIT`** 位，用于标识该记录是否是删除记录。除此之外，聚簇索引记录还有两个系统列：**`DATA_TRX_ID`**，**`DATA_ROLL_PTR`**。DATA_TRX_ID 表示产生当前记录项的事务ID；DATA _ROLL_PTR 指向当前记录项的 Undo 信息
+
+2.
+
 
 ### 4.2 TiDB - MVCC - 
 
