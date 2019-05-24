@@ -122,13 +122,30 @@ RocksDB 是一种 **`可以存储任意二进制 KV 数据的嵌入式存储`**�
 
 #### LSM Tree
 
+LSM Tree 的最早概念，诞生于 1996 年 google 的 “BigTable” 论文。后世多种数据库产品对 LSM Tree 的具体实现，都有一些小的差异。采用 LSM Tree 作为存储结构的数据库有，Google 的 LevelDB, Facebook 的 RocksDB（RocksDB 来源于 LevelDB），Cassandra 和 HBase 等。
 
-三、LSM Tree的历史由来
+**提高写吞吐量的思路**
 
-LSM Tree的最早概念，诞生于1996年google的“BigTable”论文。后世多种数据库产品对LSM Tree的具体实现，都有一些小的差异。采用LSM Tree作为存储结构的数据库有，Google的LevelDB, Facebook的RockDB(RockDB来源于LevelDB), Cassandra,HBase等。
-
-四、提高写吞吐量的思路
 既然顺序写比起随机写速度更快。那得想办法将数据顺序写。
+
+原理：是把一颗大树拆分成N棵小树， 它首先写入到内存中（内存没有寻道速度的问题，随机写的性能得到大幅提升），在内存中构建一颗有序小树，随着小树越来越大，内存的小树会flush到磁盘上。当读时，由于不知道数据在哪棵小树上，因此必须遍历所有的小树，但在每颗小树内部数据是有序的。
+
+![]()
+
+1. WAL（Write-Ahead Log）
+
+2. MemTable
+
+3. Immutable Memtable
+
+    之所以要使用 Immutable Memtable，就是为了避免将 MemTable 中的内容序列化到磁盘中时会阻塞写操作。
+
+4. SSTable
+
+5. Leveled Compaction
+
+6. Bloom Filter
+
 
 4.1 一种方式是数据来后，直接顺序落盘
 这拥有很高的写速度。但是当我们想要查寻一个数据的时候，由于存储下的数据本身是无序的（写的值本身无法控制顺序），无法使用任何算法进行优化，只能挨个查询，读取速度是很慢的。
@@ -158,10 +175,108 @@ RR | RC 隔离级别下表现形式不同（生成 Read View 的机制不同）�
 
 ![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/mvcc_pk_record_20120420.jpg)
 
-2.
+``` c
+dict_table_add_system_columns(
+/*==========================*/
+dict_table_t*   table,  /*!< in/out: table */
+mem_heap_t* heap)   /*!< in: temporary heap */
+{
+ut_ad(table);
+ut_ad(table->n_def == (table->n_cols - table->get_n_sys_cols()));
+ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
+ut_ad(!table->cached);
+/* NOTE: the system columns MUST be added in the following order
+(so that they can be indexed by the numerical value of DATA_ROW_ID,
+etc.) and as the last columns of the table memory object.
+The clustered index will not always physically contain all system
+columns.
+Intrinsic table don't need DB_ROLL_PTR as UNDO logging is turned off
+for these tables. */
+dict_mem_table_add_col(table, heap, "DB_ROW_ID", DATA_SYS,
+     DATA_ROW_ID | DATA_NOT_NULL,
+     DATA_ROW_ID_LEN);
+#if (DATA_ITT_N_SYS_COLS != 2)
+#error "DATA_ITT_N_SYS_COLS != 2"
+#endif
+#if DATA_ROW_ID != 0
+#error "DATA_ROW_ID != 0"
+#endif
+dict_mem_table_add_col(table, heap, "DB_TRX_ID", DATA_SYS,
+     DATA_TRX_ID | DATA_NOT_NULL,
+     DATA_TRX_ID_LEN);
+#if DATA_TRX_ID != 1
+#error "DATA_TRX_ID != 1"
+#endif
+if (!table->is_intrinsic()) {
+dict_mem_table_add_col(table, heap, "DB_ROLL_PTR", DATA_SYS,
+     DATA_ROLL_PTR | DATA_NOT_NULL,
+     DATA_ROLL_PTR_LEN);
+#if DATA_ROLL_PTR != 2
+#error "DATA_ROLL_PTR != 2"
+#endif
+/* This check reminds that if a new system column is added to
+the program, it should be dealt with here */
+#if DATA_N_SYS_COLS != 3
+#error "DATA_N_SYS_COLS != 3"
+#endif
+}
+}
+```
 
+2. ReadView
 
-### 4.2 TiDB - MVCC - 
+``` c
+dulint    low_limit_id;
+/* 事务号 >= low_limit_id 的记录，对于当前 Read View 都是不可见的 */
+
+dulint    up_limit_id;
+/* 事务号 < up_limit_id 的记录，对于当前 Read View 都是可见的 */
+
+ulint    n_trx_ids;
+/* Number of cells in the trx_ids array */
+
+dulint*    trx_ids;
+
+/* Additional trx ids which the read should not see: 
+   typically, these are the active transactions 
+   at the time when the read is serialized,
+   except the reading transaction itself; 
+   the trx ids in this array are in a descending order */
+
+dulint    creator_trx_id;
+/* trx id of creating transaction, or (0, 0) used in purge */
+```
+
+3. 判断逻辑
+
+``` c
+bool changes_visible(
+trx_id_t    id,
+const table_name_t& name) const
+MY_ATTRIBUTE((warn_unused_result))
+{
+    
+ut_ad(id > 0);
+
+// 如果 TRX_ID 小于 ReadView 中最小的, 则这条记录是可以看到。说明这条记录是在 select 这个事务开始之前就结束的
+if (id < m_up_limit_id || id == m_creator_trx_id) {
+    return(true);
+}
+check_trx_id_sanity(id, name);
+
+// 如果比 ReadView 中最大的还要大，则说明这条记录是在事务开始之后进行修改的，所以此条记录不应查看到
+if (id >= m_low_limit_id) {
+    return(false);
+} else if (m_ids.empty()) {
+    return(true);
+}
+const ids_t::value_type*    p = m_ids.data();
+return(!std::binary_search(p, p + m_ids.size(), id)); 
+// 判断是否在 ReadView 中， 如果在说明在创建 ReadView 时,此条记录还处于活跃状态则不应该查询到，否则说明创建 ReadView 是此条记录已经是不活跃状态则可以查询到
+}
+```
+
+### 4.2 TiDB - MVCC - GC
 
 TiDB 采用 MVCC 的方式来进行并发控制。当对数据进行更新或者删除时，原有的数据不会被立刻删除，而是会被保留一段时间，并且在这段时间内这些旧数据仍然可以被读取。这使得写入操作和读取操作不必互斥，并使读取历史数据成为可能。
 
@@ -215,7 +330,7 @@ KeyN-Version1 -> Value
 
 ### 五、事务模型（两阶段提交 + Group Commit | Percolator）
 
-
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/TiDB/tidb_trx_model_20160901.jpg)
 
 **`未完待续`**
 
