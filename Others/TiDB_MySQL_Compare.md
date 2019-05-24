@@ -123,7 +123,6 @@ RocksDB 是一种 **`可以存储任意二进制 KV 数据的嵌入式存储`**�
 #### LSM Tree
 
 
-
 三、LSM Tree的历史由来
 
 LSM Tree的最早概念，诞生于1996年google的“BigTable”论文。后世多种数据库产品对LSM Tree的具体实现，都有一些小的差异。采用LSM Tree作为存储结构的数据库有，Google的LevelDB, Facebook的RockDB(RockDB来源于LevelDB), Cassandra,HBase等。
@@ -137,8 +136,13 @@ LSM Tree的最早概念，诞生于1996年google的“BigTable”论文。后世
 4.2 另一种方式，是保证落盘的数据是顺序写入的同时，还保证这些数据是有序的
 而请求写入的数据本身是无序且不可预测的，如何保证落盘的数据是有序的呢？这就需要利用内存访问速度比硬盘快的原理。将写入的请求，先在内存中缓存起来，按一定的有序结构组织，达到一定量后，再写入硬盘，从而使得硬盘顺序写入了有序的数据。提高数据的写入速度同时，方便了后续基于有序数据的查找(有序的数据结构，可以通过二分查找等算法进行进行快速查询，具体查找算法，得看是哪种有序结构)
 
-#### 
+#### TiKV
 
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/TiDB/tidb_storage_01_20170515.png)
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/TiDB/tidb_storage_02_20170515.png)
+
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/TiDB/tidb_storage_03_20170515.png)
 
 ## 四、MVCC
 
@@ -191,7 +195,7 @@ KeyN-Version1 -> Value
 ……
 ```
 
-注意，**`对于同一个 Key 的多个版本，我们把版本号较大的放在前面，版本号小的放在后面`**（回忆一下 Key-Value 一节我们介绍过的 Key 是有序的排列），这样**`当用户通过一个 Key + Version 来获取 Value 的时候，可以将 Key 和 Version 构造出 MVCC 的 Key，也就是 Key-Version。然后可以直接 Seek(Key-Version)，定位到第一个大于等于这个 Key-Version 的位置`**。
+注意，**`对于同一个 Key 的多个版本，我们把版本号较大的放在前面，版本号小的放在后面`**（回忆一下 Key-Value 一节我们介绍过的 Key 是有序的排列），这样 **`当用户通过一个 Key + Version 来获取 Value 的时候，可以将 Key 和 Version 构造出 MVCC 的 Key，也就是 Key-Version。然后可以直接 Seek(Key-Version)，定位到第一个大于等于这个 Key-Version 的位置`**。
 
 * 垃圾收集器（Gabage Collector）
 
@@ -209,6 +213,10 @@ KeyN-Version1 -> Value
     
     **`tikv_gc_safe_point`** 记录了当前的 safePoint，用户可以安全地使用大于 safePoint 的时间戳创建 snapshot 读取历史版本。safePoint 在每次 GC 开始运行时自动更新。
 
-### 五、事务模型
+### 五、事务模型（两阶段提交 + Group Commit | Percolator）
 
 
+
+**`未完待续`**
+
+------
