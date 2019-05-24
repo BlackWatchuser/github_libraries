@@ -152,10 +152,62 @@ RR | RC 隔离级别下表现形式不同（生成 Read View 的机制不同）�
 
 1. 无论是聚簇索引，还是二级索引，其每条记录都包含了一个 **`DELETED BIT`** 位，用于标识该记录是否是删除记录。除此之外，聚簇索引记录还有两个系统列：**`DATA_TRX_ID`**，**`DATA_ROLL_PTR`**。DATA_TRX_ID 表示产生当前记录项的事务ID；DATA _ROLL_PTR 指向当前记录项的 Undo 信息
 
+![](https://raw.githubusercontent.com/CHXU0088/github_libraries/master/Pic/MySQL/mvcc_pk_record_20120420.jpg)
+
 2.
 
 
 ### 4.2 TiDB - MVCC - 
+
+TiDB 采用 MVCC 的方式来进行并发控制。当对数据进行更新或者删除时，原有的数据不会被立刻删除，而是会被保留一段时间，并且在这段时间内这些旧数据仍然可以被读取。这使得写入操作和读取操作不必互斥，并使读取历史数据成为可能。
+
+存在超过一定时间并且不再使用的版本会被清理，否则它们将始终占用硬盘空间，并对性能产生负面影响。TiDB 使用一个垃圾回收 (GC) 机制来清理这些旧数据。
+
+#### MVCC 在 TiKV 中的实现：
+
+**`TiKV 的 MVCC 实现是通过在 Key 后面添加 Version 来实现`**，简单来说，没有 MVCC 之前，可以把 TiKV 看做这样的：
+
+``` shell
+Key1 -> Value
+Key2 -> Value
+……
+KeyN -> Value
+```
+
+有了 MVCC 之后，TiKV 的 Key 排列是这样的：
+
+``` shell
+Key1-Version3 -> Value
+Key1-Version2 -> Value
+Key1-Version1 -> Value
+……
+Key2-Version4 -> Value
+Key2-Version3 -> Value
+Key2-Version2 -> Value
+Key2-Version1 -> Value
+……
+KeyN-Version2 -> Value
+KeyN-Version1 -> Value
+……
+```
+
+注意，**`对于同一个 Key 的多个版本，我们把版本号较大的放在前面，版本号小的放在后面`**（回忆一下 Key-Value 一节我们介绍过的 Key 是有序的排列），这样**`当用户通过一个 Key + Version 来获取 Value 的时候，可以将 Key 和 Version 构造出 MVCC 的 Key，也就是 Key-Version。然后可以直接 Seek(Key-Version)，定位到第一个大于等于这个 Key-Version 的位置`**。
+
+* 垃圾收集器（Gabage Collector）
+
+    通过 **`垃圾收集器（Gabage Collector）`** 来移除无效的版本，避免数据库中存有越来越多的 MVCC 版本。但是我们又不能仅仅移除某个 safe point 之前的所有版本。因为对于某个 key 来说，有可能只存在一个版本，那么这个版本就必须被保存下来。在TiKV中，如果在 safe point 前存在 Put 或者 Delete 记录，那么比这条记录更旧的写入记录都是可以被移除的，不然的话只有Delete，Rollback和Lock 会被删除。
+
+* GC
+
+    TiDB 会周期性地进行 GC。每个 TiDB Server 启动后都会在后台运行一个 gc_worker，每个集群中会有其中一个 gc_worker 被选为 leader，leader 负责维护 GC 的状态并向所有的 TiKV Region leader 发送 GC 命令。
+
+    * MVCC versions：每个 key 的版本个数
+
+    * MVCC delete versions：GC 删除掉的每个 key 的版本个数
+
+    **`tikv_gc_life_time`** 用于配置历史版本保留时间，可以手动修改；
+    
+    **`tikv_gc_safe_point`** 记录了当前的 safePoint，用户可以安全地使用大于 safePoint 的时间戳创建 snapshot 读取历史版本。safePoint 在每次 GC 开始运行时自动更新。
 
 ### 五、事务模型
 
